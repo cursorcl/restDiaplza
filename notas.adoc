@@ -1,0 +1,13 @@
+== Paquetes instalados
+sqlalchemy
+pyodbc
+sqlmlutils
+
+== Dependencias del SO
+unixodbc-dev
+freetds-dev 
+freetds-bin 
+tdsodbc
+
+== Configuración
+/etc/odbcinst.ini
