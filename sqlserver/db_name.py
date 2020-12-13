@@ -1,11 +1,10 @@
 # coding: utf-8
-from sqlalchemy import Column, DateTime, Float, Index, Integer, Numeric, SmallInteger, String, TEXT, Table, text
-from sqlalchemy.dialects.mssql import BIT, MONEY, SMALLMONEY, TINYINT
+from sqlalchemy import BINARY, BigInteger, CHAR, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, MetaData, NCHAR, Numeric, SmallInteger, String, TEXT, Table, text
+from sqlalchemy.dialects.mssql import BIT, IMAGE, MONEY, SMALLMONEY, TINYINT, UNIQUEIDENTIFIER
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 metadata = Base.metadata
-
 
 t_ALTERNATIVO = Table(
     'ALTERNATIVO', metadata,
@@ -301,9 +300,9 @@ t_CPODOCTO = Table(
     Column('Tipo', String(2, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Numero', String(9, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Folio', String(7, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Index('cpodocto01', 'Tipo', 'Folio', 'Numero', 'Correlativo'),
     Index('PKPrimaryKey', 'Rut_Provee', 'codigo_Provee', 'Tipo', 'Numero', 'Correlativo', unique=True),
-    Index('Cpodocto02', 'Rut_Provee', 'codigo_Provee', 'Tipo', 'Folio', 'Numero', 'Correlativo'),
-    Index('cpodocto01', 'Tipo', 'Folio', 'Numero', 'Correlativo')
+    Index('Cpodocto02', 'Rut_Provee', 'codigo_Provee', 'Tipo', 'Folio', 'Numero', 'Correlativo')
 )
 
 
@@ -639,10 +638,10 @@ t_DETALLEDOCUMENTO = Table(
     Column('Tipoid', String(2, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Articulo', String(15, 'Modern_Spanish_CI_AS'), index=True, server_default=text("(space((0)))")),
     Column('Descripcion', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Index('DETALLEDOCUMENTO02', 'Pedido', 'Articulo', 'Atributo', 'Especificacion'),
-    Index('DETALLEDOCUMENTO05', 'Local', 'Articulo', 'Atributo', 'Especificacion'),
     Index('DETALLEDOCUMENTO01', 'Tipoid', 'Id'),
-    Index('PKPrimaryKey', 'Id', 'Linea', unique=True)
+    Index('PKPrimaryKey', 'Id', 'Linea', unique=True),
+    Index('DETALLEDOCUMENTO05', 'Local', 'Articulo', 'Atributo', 'Especificacion'),
+    Index('DETALLEDOCUMENTO02', 'Pedido', 'Articulo', 'Atributo', 'Especificacion')
 )
 
 
@@ -688,8 +687,72 @@ t_ENCABEZADOCUMENTO = Table(
     Column('Publicado', BIT, nullable=False, server_default=text("((0))")),
     Column('PublicadoNro', String(7, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('TipoSII', Integer),
-    Index('encabezadocumento02', 'Rut', 'Codigo', 'Fecha'),
-    Index('ENCABEZADOCUMENTO01', 'Tipo', 'Numero')
+    Index('ENCABEZADOCUMENTO01', 'Tipo', 'Numero'),
+    Index('encabezadocumento02', 'Rut', 'Codigo', 'Fecha')
+)
+
+
+t_EOS_DETALLE = Table(
+    'EOS_DETALLE', metadata,
+    Column('correlativo', BigInteger, primary_key=True, nullable=False),
+    Column('articulo', String(50, 'Modern_Spanish_CI_AS'), primary_key=True, nullable=False),
+    Column('ncorrelativo', Integer),
+    Column('cantidad', MONEY),
+    Column('neto', MONEY),
+    Column('descuento', MONEY),
+    Column('ila', MONEY),
+    Column('carne', MONEY),
+    Column('iva', MONEY),
+    Column('precio', MONEY),
+    Column('numero', Integer),
+    Column('esnumerado', BIT)
+)
+
+
+t_EOS_ENCABEZADO = Table(
+    'EOS_ENCABEZADO', metadata,
+    Column('correalitvo', UNIQUEIDENTIFIER, primary_key=True),
+    Column('rut', String(10, 'Modern_Spanish_CI_AS')),
+    Column('code', String(50, 'Modern_Spanish_CI_AS')),
+    Column('fecha', DateTime),
+    Column('neto', MONEY),
+    Column('valoriva', MONEY),
+    Column('valorila', MONEY),
+    Column('valorporcarne', MONEY)
+)
+
+
+t_EOS_REGISTROS = Table(
+    'EOS_REGISTROS', metadata,
+    Column('indice', BigInteger, primary_key=True),
+    Column('rut', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('codigo', String(19, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('vendedor', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('fila', Integer, nullable=False),
+    Column('fecha', DateTime, nullable=False),
+    Column('articulo', String(10, 'Modern_Spanish_CI_AS')),
+    Column('cantidad', SMALLMONEY),
+    Column('neto', SMALLMONEY),
+    Column('descuento', SMALLMONEY),
+    Column('codigoila', String(3, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('ila', SMALLMONEY),
+    Column('carne', SMALLMONEY),
+    Column('iva', SMALLMONEY),
+    Column('precio', SMALLMONEY),
+    Column('numeros', String(512, 'Modern_Spanish_CI_AS')),
+    Column('correlativos', String(512, 'Modern_Spanish_CI_AS')),
+    Column('pesos', String(1024, 'Modern_Spanish_CI_AS')),
+    Column('esnumerado', BIT),
+    Column('totalila', SMALLMONEY),
+    Column('sobrestock', BIT)
+)
+
+
+t_EOS_USUARIOS = Table(
+    'EOS_USUARIOS', metadata,
+    Column('rut', String(10, 'Modern_Spanish_CI_AS'), primary_key=True),
+    Column('password', LargeBinary),
+    Column('lastlogin', DateTime)
 )
 
 
@@ -698,6 +761,13 @@ t_ESPECIALES = Table(
     Column('id', Numeric(18, 0), nullable=False),
     Column('productoinicio', String(50, 'Modern_Spanish_CI_AS'), nullable=False),
     Column('productofinal', String(50, 'Modern_Spanish_CI_AS'), nullable=False)
+)
+
+
+t_EosTest = Table(
+    'EosTest', metadata,
+    Column('id', Numeric(18, 0), nullable=False),
+    Column('name', NCHAR(50))
 )
 
 
@@ -881,8 +951,8 @@ t_HCTADOCTO = Table(
     Column('Tipo', String(2, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Numero', String(7, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Correlativo', SmallInteger, server_default=text("((0))")),
-    Index('hctadocto01', 'Rut_cliente', 'codigo_cliente', 'cartola', 'fecha_ingreso'),
-    Index('PKPrimaryKey', 'Tipo', 'Numero', 'Correlativo', 'TIPO1', unique=True)
+    Index('PKPrimaryKey', 'Tipo', 'Numero', 'Correlativo', 'TIPO1', unique=True),
+    Index('hctadocto01', 'Rut_cliente', 'codigo_cliente', 'cartola', 'fecha_ingreso')
 )
 
 
@@ -922,8 +992,8 @@ t_HDESCUENTORECARGO = Table(
     Column('Monto', MONEY, server_default=text("((0))")),
     Column('Id', String(10, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Linea', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Index('PKPrimaryKey', 'Id', 'Linea', unique=True),
-    Index('HDESCUENTO01', 'tipoid', 'Id')
+    Index('HDESCUENTO01', 'tipoid', 'Id'),
+    Index('PKPrimaryKey', 'Id', 'Linea', unique=True)
 )
 
 
@@ -953,12 +1023,12 @@ t_HDETALLEDOCUMENTO = Table(
     Column('Local', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Articulo', String(15, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Descripcion', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Index('HDETALLEDOCUMENTO04', 'Articulo', 'Tipoid', 'Pedido', 'Id'),
-    Index('HDETALLEDOCUMENTO03', 'Tipoid', 'Id'),
-    Index('HDETALLEDOCUMENTO01', 'Pedido', 'Articulo', 'Atributo', 'Especificacion'),
-    Index('HDETALLEDOCUMENTO05', 'Local', 'Articulo', 'Atributo', 'Especificacion'),
     Index('HDETALLEDOCUMENTO02', 'Articulo', 'Atributo', 'Especificacion'),
-    Index('PKPrimaryKey', 'Id', 'Linea', unique=True)
+    Index('HDETALLEDOCUMENTO01', 'Pedido', 'Articulo', 'Atributo', 'Especificacion'),
+    Index('HDETALLEDOCUMENTO03', 'Tipoid', 'Id'),
+    Index('PKPrimaryKey', 'Id', 'Linea', unique=True),
+    Index('HDETALLEDOCUMENTO04', 'Articulo', 'Tipoid', 'Pedido', 'Id'),
+    Index('HDETALLEDOCUMENTO05', 'Local', 'Articulo', 'Atributo', 'Especificacion')
 )
 
 
@@ -1068,8 +1138,8 @@ t_INVDETALLEPARTES = Table(
     Column('Linea', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Tipoid', String(2, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Local', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Index('PKPrimaryKey', 'Id', 'Linea', unique=True),
-    Index('INVDETALLEDOC01', 'Local', 'Articulo', 'Atributo', 'Especificacion')
+    Index('INVDETALLEDOC01', 'Local', 'Articulo', 'Atributo', 'Especificacion'),
+    Index('PKPrimaryKey', 'Id', 'Linea', unique=True)
 )
 
 
@@ -1194,55 +1264,55 @@ t_MONEDA = Table(
 
 t_MSOCLIENTES = Table(
     'MSOCLIENTES', metadata,
-    Column('despacho', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('ingreso', DateTime, server_default=text("(space((0)))")),
-    Column('comentario', String(200, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('giro', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('credito', MONEY, server_default=text("((0))")),
-    Column('categoria', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('frecuencia', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('zona', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('rubro', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('cobrador', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('vendedor', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('clasificacion', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('condicion', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('razon', String(60, 'Modern_Spanish_CI_AS'), index=True, server_default=text("(space((0)))")),
-    Column('contacto2', String(255, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('posarticulocliente', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('contacto1', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('internet', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('telefono', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('ciudad', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('comuna', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('direccion', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('sigla', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('condicioncompra', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('posespecificacioncliente', String(10, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('sucursal', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('negativo', BIT, server_default=text("((0))")),
+    Column('Despacho', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Ingreso', DateTime, server_default=text("(space((0)))")),
+    Column('Comentario', String(200, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Giro', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Credito', MONEY, server_default=text("((0))")),
+    Column('Categoria', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Frecuencia', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Zona', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Rubro', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Cobrador', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Vendedor', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Clasificacion', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Condicion', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Razon', String(60, 'Modern_Spanish_CI_AS'), index=True, server_default=text("(space((0)))")),
+    Column('Contacto2', String(255, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('PosArticuloCliente', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Contacto1', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Internet', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Telefono', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Ciudad', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Comuna', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Direccion', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Sigla', String(40, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('CondicionCompra', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('PosEspecificacionCliente', String(10, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('SUCURSAL', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Negativo', BIT, server_default=text("((0))")),
     Column('dias_actualiza', Integer, server_default=text("((0))")),
-    Column('largocodigo', TINYINT, server_default=text("((1))")),
-    Column('posatributocliente', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('importado', BIT, server_default=text("((0))")),
-    Column('item', String(5, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('cuentacorriente', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('cuentac', String(7, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('bancoc', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('descuento_final', DateTime, server_default=text("(space((0)))")),
+    Column('LargoCodigo', TINYINT, server_default=text("((1))")),
+    Column('PosAtributoCliente', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Importado', BIT, server_default=text("((0))")),
+    Column('ITEM', String(5, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('CUENTACORRIENTE', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('CUENTAC', String(7, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('BANCOC', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Descuento_final', DateTime, server_default=text("(space((0)))")),
     Column('fecha_actualiza', DateTime, server_default=text("(space((0)))")),
-    Column('auxiliar', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('descuento', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('transporte', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('tipoventa', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('ruta', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('creditomon', MONEY, server_default=text("((0))")),
-    Column('centro', String(50, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('masDatos', TEXT(2147483647, 'Modern_Spanish_CI_AS'), server_default=text("(space((1)))")),
-    Column('descuento_inicial', DateTime, server_default=text("(space((0)))")),
-    Column('rut', String(10, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('codigo', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((3)))")),
-    Index('PKPrimaryKey', 'rut', 'codigo', unique=True)
+    Column('AUXILIAR', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Descuento', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Transporte', String(30, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('TipoVenta', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Ruta', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('CreditoMon', MONEY, server_default=text("((0))")),
+    Column('Centro', String(50, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('MasDatos', TEXT(2147483647, 'Modern_Spanish_CI_AS'), server_default=text("(space((1)))")),
+    Column('Descuento_inicial', DateTime, server_default=text("(space((0)))")),
+    Column('Rut', String(10, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Column('Codigo', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((3)))")),
+    Index('PKPrimaryKey', 'Rut', 'Codigo', unique=True)
 )
 
 
@@ -1334,8 +1404,8 @@ t_MSOSTTABLAS = Table(
     Column('Email6', String(100, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('sbif', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('codigosii', String(4, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Index('msosttablas01', 'tabla', 'descripcion'),
-    Index('PKPrimaryKey', 'tabla', 'codigo', unique=True)
+    Index('PKPrimaryKey', 'tabla', 'codigo', unique=True),
+    Index('msosttablas01', 'tabla', 'descripcion')
 )
 
 
@@ -1354,10 +1424,10 @@ t_MSOVENDEDOR = Table(
     'MSOVENDEDOR', metadata,
     Column('comentario', String(100, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('tipo', String(1, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('noactivo', BIT, server_default=text("((0))")),
-    Column('metamon', MONEY, server_default=text("((0))")),
+    Column('NoActivo', BIT, server_default=text("((0))")),
+    Column('MetaMon', MONEY, server_default=text("((0))")),
     Column('estadocivil', String(1, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-    Column('meta', MONEY, server_default=text("((0))")),
+    Column('Meta', MONEY, server_default=text("((0))")),
     Column('comision', Float(53), server_default=text("((0))")),
     Column('fechaing', DateTime, server_default=text("(space((0)))")),
     Column('fechanac', DateTime, server_default=text("(space((0)))")),
@@ -1409,15 +1479,16 @@ t_MSROTULO = Table(
     Column('D_Elec', BIT, server_default=text("((1))"))
 )
 
-NUMERADO = Table (
+
+t_NUMERADOS = Table(
     'NUMERADOS', metadata,
     Column('articulo', String(50, 'Modern_Spanish_CI_AS'), server_default=text("('')")),
     Column('correlativo', Integer, primary_key=True),
     Column('peso', MONEY, server_default=text("((0))")),
     Column('numero', Integer, server_default=text("((0))")),
     Column('narticulo', Integer)
-
 )
+
 
 t_PARAMETROS = Table(
     'PARAMETROS', metadata,
@@ -1808,9 +1879,9 @@ t_PRECIOS = Table(
     Column('Atributo', String(5, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('CodigoLista', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
     Column('Articulo', String(15, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
+    Index('PKPrimaryKey', 'CodigoLista', 'Articulo', 'Atributo', 'Especificacion', 'Local', 'Rut', 'Codigo', unique=True),
     Index('PRECIOS01', 'Rut', 'Codigo', 'Articulo', 'Atributo', 'Especificacion'),
-    Index('PRECIOS02', 'Local', 'Articulo', 'Atributo', 'Especificacion'),
-    Index('PKPrimaryKey', 'CodigoLista', 'Articulo', 'Atributo', 'Especificacion', 'Local', 'Rut', 'Codigo', unique=True)
+    Index('PRECIOS02', 'Local', 'Articulo', 'Atributo', 'Especificacion')
 )
 
 
@@ -1961,6 +2032,18 @@ t_RespaldoMSOCLIENTES = Table(
 )
 
 
+t_SPRING_SESSION = Table(
+    'SPRING_SESSION', metadata,
+    Column('PRIMARY_ID', CHAR(36, 'Modern_Spanish_CI_AS'), primary_key=True),
+    Column('SESSION_ID', CHAR(36, 'Modern_Spanish_CI_AS'), nullable=False, unique=True),
+    Column('CREATION_TIME', BigInteger, nullable=False),
+    Column('LAST_ACCESS_TIME', BigInteger, nullable=False),
+    Column('MAX_INACTIVE_INTERVAL', Integer, nullable=False),
+    Column('EXPIRY_TIME', BigInteger, nullable=False, index=True),
+    Column('PRINCIPAL_NAME', String(100, 'Modern_Spanish_CI_AS'), index=True)
+)
+
+
 t_STOCKMINIMO = Table(
     'STOCKMINIMO', metadata,
     Column('Articulo', String(15, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
@@ -2042,16 +2125,42 @@ t_TOTALDOCUMENTO = Table(
     Index('TipoId', 'TipoId', 'Id')
 )
 
-t_VIEW_STOCK = Table(
-    'View_Stock', metadata,
-        Column('articulo', String(15, 'Modern_Spanish_CI_AS'), unique=True, server_default=text("(space((0)))")),
-        Column('descripcion', String(40, 'Modern_Spanish_CI_AS'), index=True, server_default=text("(space((0)))")),
-        Column('ventaneto', MONEY, server_default=text("((0))")),
-        Column('porcila', Float(53), server_default=text("((0))")),
-        Column('porccarne', Float(53), server_default=text("((0))")),
-        Column('unidad', String(3, 'Modern_Spanish_CI_AS'), server_default=text("(space((0)))")),
-        Column('stock', MONEY, server_default=text("((0))")),
-        Column('pieces', Integer, server_default=text("((0))")),
-        Column('numbered', BIT, server_default=text("((0))"))
 
-    )
+t_VENTAS_METRICS = Table(
+    'VENTAS_METRICS', metadata,
+    Column('time', DateTime),
+    Column('name', String(50, 'Modern_Spanish_CI_AS')),
+    Column('ventaneta', Numeric(18, 0)),
+    Column('ventabruta', Numeric(18, 0))
+)
+
+
+t_View_Stock = Table(
+    'View_Stock', metadata,
+    Column('Articulo', String(15, 'Modern_Spanish_CI_AS')),
+    Column('Descripcion', String(40, 'Modern_Spanish_CI_AS')),
+    Column('VentaNeto', MONEY),
+    Column('PorcIla', Float(53)),
+    Column('PorcCarne', Float(53)),
+    Column('Unidad', String(3, 'Modern_Spanish_CI_AS')),
+    Column('Stock', MONEY),
+    Column('Pieces', Integer),
+    Column('Numbered', Integer, nullable=False)
+)
+
+
+t_systranschemas = Table(
+    'systranschemas', metadata,
+    Column('tabid', Integer, nullable=False),
+    Column('startlsn', BINARY(10), nullable=False, unique=True),
+    Column('endlsn', BINARY(10), nullable=False),
+    Column('typeid', Integer, nullable=False, server_default=text("((52))"))
+)
+
+
+t_SPRING_SESSION_ATTRIBUTES = Table(
+    'SPRING_SESSION_ATTRIBUTES', metadata,
+    Column('SESSION_PRIMARY_ID', ForeignKey('SPRING_SESSION.PRIMARY_ID'), primary_key=True, nullable=False),
+    Column('ATTRIBUTE_NAME', String(200, 'Modern_Spanish_CI_AS'), primary_key=True, nullable=False),
+    Column('ATTRIBUTE_BYTES', IMAGE, nullable=False)
+)
