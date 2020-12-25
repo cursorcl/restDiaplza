@@ -95,10 +95,12 @@ class DBProcessor:
                                               carne=carne, iva=iva, precio=precio, numeros=numeros,
                                               correlativos=correlativos, pesos=pesos,
                                               esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
+        r = self.session.execute(ins)
         self.session.commit()
 
+
         return RegistroOutput(
-            indice=input.indice,
+            indice=r.inserted_primary_key[0],
             rut=input.rut,
             codigo=code,
             vendedor=input.vendedor,
@@ -156,7 +158,7 @@ class DBProcessor:
         self.session.commit()
 
         return RegistroOutput(
-            indice=input.indice,
+            indice=r.inserted_primary_key[0],
             rut=input.rut,
             codigo=code,
             vendedor=input.vendedor,
@@ -250,7 +252,10 @@ class DBProcessor:
         @param indice: Indice en la BD del registro que se quiere eliminar
         @return:
         """
-        register = self.session.query(t_EOS_REGISTROS).filter(t_EOS_REGISTROS.indice == indice).first()
+        register = self.session.query(t_EOS_REGISTROS).filter(t_EOS_REGISTROS.c.indice == indice).first()
+        if register is None:
+            return None
+
         if register.esnumerado:
             numeros = register.numeros.split(";")
             pesos = register.pesos.split(";")
@@ -264,9 +269,11 @@ class DBProcessor:
                     narticulo=int(register.articulo))
                 self.session.execute(insert_stmt)
 
-        self.session.delete(register)
+        stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
+        self.session.execute(stmt)
         self.session.flush()
         self.session.commit()
+        return register
 
     def comision_vendedor(self, confirmation: SaleConfirmByClient):
         t = t_MSOVENDEDOR

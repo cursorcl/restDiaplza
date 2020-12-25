@@ -2,6 +2,8 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
 
+from pydantic.schema import date
+
 
 class UserLogin(BaseModel):
     """
@@ -70,6 +72,14 @@ class Product(BaseModel):
     Pieces: int
     Numbered: bool
 
+class FProduct(BaseModel):
+    Articulo: str
+    Descripcion: str
+    VentaNeto: float
+    PorcIla: float
+    PorcCarne: float
+    Unidad: str
+
 
 class Encabezado_listado(BaseModel):
     """
@@ -94,18 +104,18 @@ class Detalle_Listado(BaseModel):
     linea: str
 
 
-class Encabezado(BaseModel):
+class ResumenVenta(BaseModel):
     """
     Corresponde al encabezado que de ventas utilizado cuando se realiza una venta
     """
-    correlativo: int
     rut: str
-    code: str
-    fecha: datetime
-    neto: float
-    valoriva: float
-    valorila: float
-    valorporcarne: float
+    codigo: str
+    fecha: date
+    neto: Optional[float]
+    descuento: Optional[float]
+    totalila: Optional[float]
+    carne: Optional[float]
+    iva: Optional[float]
 
 
 class RegistroInput(BaseModel):

@@ -1,5 +1,8 @@
 from collections import UserList
 import base64
+import datetime
+from sqlalchemy import cast, Date
+
 from typing import List
 
 import uvicorn
@@ -9,6 +12,8 @@ import logging
 from fastapi import FastAPI, HTTPException
 import logging
 
+from fastapi.responses import ORJSONResponse
+from sqlalchemy import func, sql
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 
@@ -19,11 +24,11 @@ import hashlib
 
 from sqlserver.basedipalza import Base, engine, session
 from sqlserver.db_name import t_MSOVENDEDOR, t_MSOSTTABLAS, t_MSOCLIENTES, t_ENCABEZADOCUMENTO, \
-    t_DETALLEDOCUMENTO, t_NUMERADOS, t_View_Stock, t_EOS_USUARIOS
-from models.user_model import User, Seller, Route, Client, Product, Piece, Encabezado, Pieces, \
+    t_DETALLEDOCUMENTO, t_NUMERADOS, t_View_Stock, t_EOS_USUARIOS, t_ARTICULO, t_ARTICULOSNUMERADOS, t_INVDETALLEPARTES, \
+    t_EOS_REGISTROS
+from models.user_model import User, Seller, Route, Client, Product, Piece, Pieces, \
     Encabezado_listado, Detalle_Listado, UserLogin, RegistroOutput, RegistroInput, SellCondition, SaleConfirmByClient, \
-    SaleConfirmBySeller
-
+    SaleConfirmBySeller, FProduct, ResumenVenta
 
 logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
 logger = logging.getLogger(__name__)
@@ -163,6 +168,50 @@ def delete_pieces_by_correlative(correlative: int):
     session.commit()
     return Pieces.parse_obj(numbered)
 
+@app.get('/fproducts', response_model=List[FProduct])
+def read_fast_prodcuts():
+    products = session.query(t_ARTICULO).all()
+    return to_array_of_json(products, t_ARTICULO)
+
+@app.get('/fproduct/code/{code}', response_model=Product)
+def read_fast_product_by_code(code: str):
+    """
+    Obtiene el producto que corresponde al código ingresado
+    @param code: Código con el que se identifica el producto
+    @return:  El producto con su stock.
+    """
+
+    t = t_ARTICULO
+    products = session.query(t).filter(t.c.Articulo == code).all()
+    pr = products[0]
+
+    p = Product(Articulo = pr.Articulo, Descripcion = pr.Descripcion, VentaNeto = pr.VentaNeto, PorcIla = pr.PorcIla, PorcCarne = pr.PorcCarne, Unidad = pr.Unidad, Stock = 0, Pieces = 0, Numbered = False)
+
+    t = t_ARTICULOSNUMERADOS
+    exists = session.query(t).filter(t.c.articulo == code).scalar() is not None
+    if exists:
+        # es numerado
+        t = t_NUMERADOS
+        wc = session.query(func.sum(t.c.peso), func.count(t.c.peso)).filter(t.c.articulo == code).all()
+        if wc and len(wc) > 0:
+            p.Stock = wc[0][0]
+            p.Pieces = wc[0][1]
+    else:
+
+        d = t_DETALLEDOCUMENTO
+        e = t_ENCABEZADOCUMENTO
+        t = t_INVDETALLEPARTES
+        suma = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code, t.c.Tipoid == 17, t.c.Local == '000').scalar()
+        resta = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code, t.c.Tipoid == 18, t.c.Local == '000').scalar()
+
+        suma_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d, d.c.Id == e.c.Id).filter( d.c.Tipoid == '09', d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
+        resta_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d, d.c.Id == e.c.Id).filter( d.c.Tipoid.in_(['06', '10']),
+                                                                              d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
+        p.Stock = suma - resta + suma_1 - resta_1
+
+    return p
+
+
 @app.get('/products', response_model=List[Product])
 def read_products():
     """
@@ -232,23 +281,26 @@ def register_item_temporal_sale(registro: RegistroInput):
         return Response("Hay 0 item de este producto", status_code=405)
     return register
 
-@app.delete('/removeregisteritem/', response_model=RegistroOutput)
+@app.delete('/removeregisteritem/')
 def delete_register_item_temporal_sale(registro: RegistroInput):
     """
     Elimina el registro temporal desde la BD
     @param registro:  El registro que se quiere eliminar
     @return:  el registro eliminado
     """
-    dbProcessor.eliminar_registro(registro.indice)
+    register = dbProcessor.eliminar_registro(registro.indice, response_class=ORJSONResponse)
+    return [{"result": register}]
 
-@app.delete('/removeregisteritem/{indice}', response_model=RegistroOutput)
-def delete_register_item_temporal_sale(indice: int):
+@app.delete('/removeregisteritem/{indice}')
+def delete_register_item_temporal_sale(indice: int, response_class=ORJSONResponse):
     """
     Elimina el registro temporal desde la BD
     @param indice:  El indice de BD del elemento
     @return:  el registro eliminado
     """
-    dbProcessor.process_delete_register(indice)
+    register = dbProcessor.eliminar_registro(indice)
+    return [{"result": register}]
+
 
 @app.post('/registersale')
 def register_sales_by_client(register : SaleConfirmByClient):
@@ -270,13 +322,47 @@ def register_sale_by_seller(register: SaleConfirmBySeller):
     """
     pass
 
-@app.get('/listsales/sale/{sale}')
+@app.get('/listsales/sale/{sale}', response_model=List[ResumenVenta])
 def list_sales_by_sale(sale: str):
-    pass
+
+
+    t = t_EOS_REGISTROS
+    stmt = session.query(
+        t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"), func.sum(t.c.neto).label('neto'),
+        func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
+        func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva'))\
+        .filter(t.c.vendedor == sale).group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date))
+
+    result = session.execute(stmt)
+
+
+    lst = []
+    for row in result:
+        d = dict(zip(row.keys(), row))
+
+        lst.append(d)
+
+    return lst
+
+
+
+
+
+@app.get('/listsales/sale/{sale}/rut/{rut}/date/{date}')
+def list_sale_by_sale_by_rut_by_date(sale: str, rut: str, date:int):
+    t = t_EOS_REGISTROS
+
+    fechai = datetime.datetime.fromtimestamp(date)
+    details = session.query(t).filter(t.c.rut == rut,  t.c.vendedor == sale, t.c.fecha.cast(Date) == fechai).order_by("fila").all()
+    return to_array_of_json(details, t_EOS_REGISTROS)
 
 @app.get('/listsales/sale/{sale}/rut/{rut}/code/{code}/date/{date}')
 def list_sale_by_sale_by_rut_by_date(sale: str, rut: str, code:str, date:int):
-    pass
+    t = t_EOS_REGISTROS
+    fechai = datetime.datetime.fromtimestamp(date)
+    details = session.query(t).filter(t.c.rut == rut, t.c.codigo == code, t.c.vendedor == sale, t.c.fecha.cast(Date) == fechai).order_by("fila")
+
+    return to_array_of_json(details, t_EOS_REGISTROS)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8099)
+    uvicorn.run(app, host="0.0.0.0", port=7000)
