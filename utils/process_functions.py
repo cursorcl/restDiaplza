@@ -2,7 +2,7 @@ import datetime
 import decimal
 import logging
 
-from sqlalchemy import func, Integer, cast
+from sqlalchemy import func, Integer, cast, Date
 
 from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
@@ -24,6 +24,7 @@ class DBProcessor:
         self.tipo_documento = "06"
         self.paridad = 1.0
         self.electronic_bill = "E" if self.electronic_bill_enabled else " "
+        self.ilas_dict_vacio = self.__obtener_diccionario_tipo_ilas()
 
     def agregar_registro_numerado(self, input: RegistroInput):
         """
@@ -288,9 +289,29 @@ class DBProcessor:
 
         return comision
 
-    def process_venta(self, confirmation: SaleConfirmByClient):
+
+    def procesar_ventas(self, sale: str):
+        """
+        Procesa todas las ventas que se encunentran en los registros para un vendedor.
+        """
+
+        t = t_EOS_REGISTROS
+        stmt = self.session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha")).filter(t.c.vendedor == sale).distinct()
+
+        result = self.session.execute(stmt)
+
+
+        for registro in result:
+            args = registro.fecha.timetuple()[:6]
+            fecha = datetime.datetime(*args)
+            item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
+                                        condicion_venta = "001", fecha = fecha)
+            self.process_venta(item)
+
+
+    def process_venta(self, confirmation: SaleConfirmByClient ):
         # generar map de los códigos de ILA
-        ilas_dict_vacio = self.__obtener_diccionario_tipo_ilas()
+
         condicion_venta = confirmation.condicion_venta
         __num_dias_condicion_venta = self.__num_dias_condicion_venta(condicion_venta)
         fecha_operacion = confirmation.fecha
@@ -318,7 +339,7 @@ class DBProcessor:
         for registro in registros:
             if nro_lineas % self.numero_lineas_factura == 0:
                 correlativo = correlativo + 1
-                ilas_venta_dict = ilas_dict_vacio.copy()
+                ilas_venta_dict = self.ilas_dict_vacio.copy()
                 neto_venta = 0
                 iva_venta = 0
                 carne_venta = 0
@@ -549,5 +570,3 @@ class DBProcessor:
             #    continue
         pass
 
-    def procesar_rebajar_ventas(self):
-        pass

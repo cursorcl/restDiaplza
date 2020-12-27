@@ -1,7 +1,7 @@
 from collections import UserList
 import base64
 import datetime
-from sqlalchemy import cast, Date
+from sqlalchemy import Date
 
 from typing import List
 
@@ -312,15 +312,14 @@ def register_sales_by_client(register : SaleConfirmByClient):
     """
     dbProcessor.process_venta(register)
 
-@app.post('/registersale/{code}')
-def register_sale_by_seller(register: SaleConfirmBySeller):
+@app.post('/registersale/{sale}')
+def register_sale_by_seller(sale: str):
     """
-    Registra una venta realizada, esto corresponde a generar la o las facturas correspondientes a la venta que tiene el vendedor.
-
-    @param code:
+    Registra todas las ventas realizadas, esto corresponde a generar las facturas correspondientes a la venta que tiene el vendedor.
+    @param sale: El vendedor que registra la venta.
     @return:
     """
-    pass
+    dbProcessor.procesar_ventas(sale)
 
 @app.get('/listsales/sale/{sale}', response_model=List[ResumenVenta])
 def list_sales_by_sale(sale: str):
@@ -343,10 +342,6 @@ def list_sales_by_sale(sale: str):
         lst.append(d)
 
     return lst
-
-
-
-
 
 @app.get('/listsales/sale/{sale}/rut/{rut}/date/{date}')
 def list_sale_by_sale_by_rut_by_date(sale: str, rut: str, date:int):
