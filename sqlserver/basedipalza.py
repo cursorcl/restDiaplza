@@ -5,7 +5,7 @@ import datetime
 
 from utils.util import pwd_context, encrypt_password
 
-engine = create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format('sa', '_l2j1rs2', '192.168.0.7', '1433', 'MASTERSOFT'))
+engine = create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format('sa', '_l2j1rs2', '192.168.0.8', '1433', 'MASTERSOFT'))
 
 # create a configured 'Session' class
 Session = sessionmaker(bind=engine)

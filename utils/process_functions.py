@@ -2,7 +2,7 @@ import datetime
 import decimal
 import logging
 
-from sqlalchemy import func, Integer, cast, Date
+from sqlalchemy import func, Integer, cast
 
 from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
@@ -25,6 +25,7 @@ class DBProcessor:
         self.paridad = 1.0
         self.electronic_bill = "E" if self.electronic_bill_enabled else " "
         self.ilas_dict_vacio = self.__obtener_diccionario_tipo_ilas()
+
 
     def agregar_registro_numerado(self, input: RegistroInput):
         """
@@ -121,7 +122,7 @@ class DBProcessor:
             esnumerado=input.esnumerado,
             codigo_ila=codigo_ila
         )
-        return registrostmt
+
 
     def agregar_registro_no_numerado(self, input: RegistroInput):
         # product = self.session.query(t_View_Stock).filter(t_View_Stock.c.Articulo == input.articulo).first()
@@ -289,7 +290,6 @@ class DBProcessor:
 
         return comision
 
-
     def procesar_ventas(self, sale: str):
         """
         Procesa todas las ventas que se encunentran en los registros para un vendedor.
@@ -308,10 +308,8 @@ class DBProcessor:
                                         condicion_venta = "001", fecha = fecha)
             self.process_venta(item)
 
-
-    def process_venta(self, confirmation: SaleConfirmByClient ):
+    def process_venta(self, confirmation: SaleConfirmByClient):
         # generar map de los códigos de ILA
-
         condicion_venta = confirmation.condicion_venta
         __num_dias_condicion_venta = self.__num_dias_condicion_venta(condicion_venta)
         fecha_operacion = confirmation.fecha
@@ -369,7 +367,7 @@ class DBProcessor:
             # Se agrega registro de conducción.
             conduccion =  self.__obtener_conduccion()
             if conduccion is None:
-                return
+                return False
 
             factura = facturas[correlativo]
             nro_lineas = len(factura["registros"])
@@ -389,7 +387,6 @@ class DBProcessor:
             facturas[correlativo]["registros"].append(conduccion)
             facturas[correlativo]["total_neto"] = neto_venta
 
-
         for factura in facturas.values():
             # obtengo aquí el número para obtener el último número justo antes de grabar
             factura["id"] = self.__siguiente_id()
@@ -403,6 +400,8 @@ class DBProcessor:
             self.grabar_cuenta_documento(factura)
             self.grabar_folios(factura)
             self.grabar_ila(factura)
+        
+        return True
 
     def grabar_encabezado(self, factura):
         """
@@ -568,5 +567,7 @@ class DBProcessor:
             self.session.commit()
             # except:
             #    continue
-        pass
 
+
+    def procesar_rebajar_ventas(self):
+        pass

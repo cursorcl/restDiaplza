@@ -2164,3 +2164,21 @@ t_SPRING_SESSION_ATTRIBUTES = Table(
     Column('ATTRIBUTE_NAME', String(200, 'Modern_Spanish_CI_AS'), primary_key=True, nullable=False),
     Column('ATTRIBUTE_BYTES', IMAGE, nullable=False)
 )
+
+t_EOS_CONFIGURACION = Table(
+    'EOS_CONFIGURACION', metadata,
+    Column('clave', String(255, 'SQL_Latin1_General_CP1_CI_AS'), primary_key=True),
+    Column('valor', TEXT(2147483647, 'SQL_Latin1_General_CP1_CI_AS'))
+)
+
+
+t_EOS_POSITIONS = Table(
+    'EOS_POSITIONS', metadata,
+    Column('indice', Integer, primary_key=True),
+    Column('vendedor', String(10, 'SQL_Latin1_General_CP1_CI_AS'), nullable=False),
+    Column('fecha', DateTime, nullable=False),
+    Column('latitude', Float(53), nullable=False),
+    Column('longitude', Float(53), nullable=False),
+    Column('velocidad', Float(53), nullable=False, server_default=text("((-1))"))
+)
+

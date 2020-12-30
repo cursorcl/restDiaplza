@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -106,7 +106,7 @@ class Detalle_Listado(BaseModel):
 
 class ResumenVenta(BaseModel):
     """
-    Corresponde al encabezado que de ventas utilizado cuando se realiza una venta
+    Corresponde al resumen de una venta asociada a un vendedor y cliente.
     """
     rut: str
     codigo: str
@@ -182,4 +182,23 @@ class SaleConfirmBySeller(BaseModel):
     """
     vendedor: str # código del vendedor que está realizando la venta
 
+class PositionRegister(BaseModel):
+    """
+        Confirmación de todas las ventas de un vendedor.
+    """
+    vendedor: str # código del vendedor que está realizando la venta
+    fecha: datetime
+    latitude: float
+    longitude: float
+    velocidad: float
 
+class PositionRegisterOutput(BaseModel):
+    """
+        Confirmación de todas las ventas de un vendedor.
+    """
+    indice: int
+    vendedor: str # código del vendedor que está realizando la venta
+    fecha: datetime
+    latitude: float
+    longitude: float
+    velocidad: float

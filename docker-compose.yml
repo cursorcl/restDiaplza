@@ -1,6 +1,6 @@
 version: '2'
 services:
-  dipalza-fastapi-server:
+  dipalza-fastapi:
     build:
       context: .
       dockerfile: dipalza.Dockerfile
@@ -9,6 +9,5 @@ services:
       - "8099:80"
     volumes:
       - .:/app
-    
 volumes:
   app:

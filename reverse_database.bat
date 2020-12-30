@@ -1,0 +1,1 @@
+sqlacodegen mssql+pymssql://sa:_l2j1rs2@192.168.0.8:1433/MASTERSOFT --noclasses  --outfile dipalza.sql
