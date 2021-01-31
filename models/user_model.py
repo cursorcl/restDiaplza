@@ -57,6 +57,10 @@ class Piece(BaseModel):
         orm_mode = True
 
 
+class SellerCode(BaseModel):
+    codigo: str
+
+
 class Pieces(BaseModel):
     __root__: List[Piece]
 
@@ -202,3 +206,32 @@ class PositionRegisterOutput(BaseModel):
     latitude: float
     longitude: float
     velocidad: float
+
+class PositionIem(BaseModel):
+    """
+        Registro de un item de listado app-web
+    """
+    code: str # código del vendedor que está realizando la venta
+    rut: str
+    name: str
+    date: datetime
+    latitude: float
+    longitude: float
+    position: str
+    speed: float
+
+class ResumenVentaWeb(BaseModel):
+    """
+    Corresponde al resumen de una venta agrupada x cliente.
+    """
+    rut: str
+    codigo: str
+    nombre: str
+    fecha: date
+    neto: Optional[float]
+    descuento: Optional[float]
+    totalila: Optional[float]
+    carne: Optional[float]
+    iva: Optional[float]
+    codigo_vendedor: str
+    nombre_vendedor: str

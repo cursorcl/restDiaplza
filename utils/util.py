@@ -1,12 +1,8 @@
-import decimal, datetime
-import json
-from collections import OrderedDict
-
 from passlib.context import CryptContext
-from sqlalchemy import Table
-
 from models.user_model import RegistroOutput
 from sqlserver.db_name import t_EOS_REGISTROS
+
+import re
 
 pwd_context = CryptContext(
         schemes=["pbkdf2_sha256"],
@@ -106,4 +102,38 @@ def to_RegistroOutput(register: t_EOS_REGISTROS):
         esnumerado=register.esnumerado
     )
     return r
+
+def format_rut_with_points(rut:str):
+    str_rut = rut.strip().replace(".","").replace("-","").upper()
+    verification_number= str_rut[-1]
+    value_number = str_rut[:-1]
+    str_number = re.sub('\D', "", value_number)
+    number = int(str_number)
+    str_number =f"{number:,}".replace(",", ".")
+    return f"{str_number}-{verification_number}"
+
+def format_position(latitude: float, longitude: float):
+    lat = float_lat_to_str(latitude)
+    lon = float_lon_to_str(longitude)
+    return f"{lat} {lon}"
+
+def float_lat_to_str(lat: float):
+    h = "S" if lat < 0 else "N"
+    l = abs(lat)
+    g = int(l)
+    l = (l - g) * 60
+    m = int(l)
+    l = (l - m) * 60
+    s = l
+    return f"{g:02}º{m:02}'{s:05.02f}''[{h}]"
+
+def float_lon_to_str(lon: float):
+    h = "W" if lon < 0 else "E"
+    l = abs(lon)
+    g = int(l)
+    l = (l - g) * 60
+    m = int(l)
+    l = (l - m) * 60
+    s = l
+    return f"{g:03}º{m:02}'{s:05.02f}''[{h}]"
 

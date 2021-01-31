@@ -2,7 +2,8 @@ import datetime
 import decimal
 import logging
 
-from sqlalchemy import func, Integer, cast
+
+from sqlalchemy import func, Integer, cast, Date
 
 from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
@@ -229,11 +230,12 @@ class DBProcessor:
             codigo = "9998"
 
         t = t_MSOSTTABLAS
-        generator = self.session.query(t).filter(t.c.Tabla == "015", t.c.Codigo == codigo).values(t.c.Codigo, t.c.Descripcion, t.c.Valor)
+        generator = self.session.query(t).filter(t.c.tabla == "015", t.c.codigo == codigo).values(t.c.codigo, t.c.descripcion.label('Descripcion'), t.c.valor)
         register = next(generator, None)
         if not register:
             return None
-        return {"codigo": register[0].Codigo, "descripcion": register[0].Descripcion, "valor": register[0].valor}
+
+        return register
 
     def __obtener_diccionario_tipo_ilas(self):
         t = t_MSOSTTABLAS
@@ -307,6 +309,7 @@ class DBProcessor:
             item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
                                         condicion_venta = "001", fecha = fecha)
             self.process_venta(item)
+        return True
 
     def process_venta(self, confirmation: SaleConfirmByClient):
         # generar map de los códigos de ILA
@@ -330,12 +333,14 @@ class DBProcessor:
             r.c.codigoila, r.c.ila, r.c.carne, r.c.iva, r.c.precio, r.c.numeros, r.c.correlativos, r.c.pesos,
             r.c.esnumerado, r.c.totalila, p.c.Costo, p.c.Descripcion)
 
-        nro_lineas = 0
+
         facturas = dict()
         correlativo = 0
         # obtengo los registros de cada venta y aprovecho de realizar cálculos
+        nro_lineas = 0
         for registro in registros:
             if nro_lineas % self.numero_lineas_factura == 0:
+                nro_lineas = 1
                 correlativo = correlativo + 1
                 ilas_venta_dict = self.ilas_dict_vacio.copy()
                 neto_venta = 0
@@ -364,18 +369,15 @@ class DBProcessor:
             facturas[correlativo]["total_descuento"] = descuento_venta
             nro_lineas = nro_lineas + 1
 
-            # Se agrega registro de conducción.
-            conduccion =  self.__obtener_conduccion()
-            if conduccion is None:
-                return False
-
+        # Se agrega registro de conducción.
+        conduccion =  self.__obtener_conduccion(confirmation.rut)
+        if conduccion is None:
+            pass
+        else:
             factura = facturas[correlativo]
-            nro_lineas = len(factura["registros"])
-            if nro_lineas % self.numero_lineas_factura == 0:
-                neto_venta = 0
-                iva_venta = 0
-                carne_venta = 0
-                descuento_venta = 0
+            neto_venta = factura["total_neto"]
+            if nro_lineas >= self.numero_lineas_factura:
+                correlativo = correlativo + 1
                 facturas[correlativo] = { "id": "", "factura": "", "condicion_venta": condicion_venta,
                     "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
                     "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
@@ -383,7 +385,7 @@ class DBProcessor:
                     "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
                     "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": [] }
 
-            neto_venta = conduccion["valor"]
+            neto_venta = neto_venta + conduccion[2]
             facturas[correlativo]["registros"].append(conduccion)
             facturas[correlativo]["total_neto"] = neto_venta
 
@@ -423,6 +425,7 @@ class DBProcessor:
                                                   Local=self.local, Id=id, Tipo=self.tipo_documento,
                                                   Numero=numero_factura,
                                                   Codigo=codigo_cliente, TIPO1=es_factura_electronica,
+                                                  Publicado=0,
                                                   PublicadoNro=numero_factura)
         # try:
         self.session.execute(ins)
@@ -437,38 +440,25 @@ class DBProcessor:
         linea = 1
         for registro in factura["registros"]:
             texto_descripcion = registro.Descripcion
-            if registro.numeros != None and registro.numeros.strip() != "":
+
+            if "numeros" in registro.keys() and registro.numeros != None and registro.numeros.strip() != "":
                 texto_descripcion = f"{texto_descripcion} [{registro.numeros}]"
-            if type(registro) == t_EOS_REGISTROS:
-                ins = t.insert().values(
-                    PrecioVenta=registro.precio,
-                    TotalLinea=registro.neto,
-                    Paridad=self.paridad,
-                    PrecioCosto=registro.precio,
-                    Cantidad=registro.cantidad,
-                    Id=factura["id"],
-                    Linea=f"{linea:03}",
-                    Tipoid=self.tipo_documento,
-                    Local=self.local,
-                    Articulo=registro.articulo,
-                    Variacion=-registro.descuento,
-                    Descripcion=texto_descripcion
-                )
-            else:
-                ins = t.insert().values(
-                    PrecioVenta=registro["valor"],
-                    TotalLinea=registro["valor"],
-                    Paridad=self.paridad,
-                    PrecioCosto=registro["valor"],
-                    Cantidad=1,
-                    Id=factura["id"],
-                    Linea=f"{linea:03}",
-                    Tipoid=self.tipo_documento,
-                    Local=self.local,
-                    Articulo=registro["codigo"],
-                    Variacion=0,
-                    Descripcion=registro["descripcion"]
-                )
+
+            ins = t.insert().values(
+                PrecioVenta= registro.precio if "precio" in registro.keys()   else 0,
+                TotalLinea= registro.neto if "neto" in registro.keys()  else 0,
+                Paridad= self.paridad,
+                PrecioCosto= registro.precio if "precion" in registro.keys()  else 0,
+                Cantidad=registro.cantidad if "cantidad" in registro.keys()  else 0,
+                Id=factura["id"],
+                Linea=f"{linea:03}",
+                Tipoid=self.tipo_documento,
+                Local=self.local,
+                Articulo=registro.articulo if "articulo" in registro.keys()  else "000",
+                Variacion=-registro.descuento if "descuento" in registro.keys()  else 0,
+                Descripcion=texto_descripcion
+            )
+
             # try:
             self.session.execute(ins)
             linea = linea + 1
@@ -559,9 +549,10 @@ class DBProcessor:
         @return:
         """
         t = t_MSOSTVENTASILA
-        for ila in factura["ilas"]:
+        for ila in factura["ilas"].values():
             # try:
-            ins = t.insert().values(tipo=self.electronic_bill, TIPO1=factura.tipo, codigo=ila["codigo"],
+
+            ins = t.insert().values(tipo=factura["tipo"], TIPO1=self.electronic_bill, codigo=ila["codigo"],
                                     valor=ila["suma"], numero=factura["factura"], ila=ila["porcentaje"])
             self.session.execute(ins)
             self.session.commit()
