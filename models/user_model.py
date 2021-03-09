@@ -36,9 +36,9 @@ class Client(BaseModel):
 
 
 class Seller(BaseModel):
-    Codigo: str
-    Rut: str
-    Nombre: str
+    codigo: str
+    rut: str
+    nombre: str
 
 
 class Route(BaseModel):
@@ -75,6 +75,7 @@ class Product(BaseModel):
     Stock: float
     Pieces: int
     Numbered: bool
+    CodigoIla: str
 
 class FProduct(BaseModel):
     Articulo: str
@@ -113,6 +114,7 @@ class ResumenVenta(BaseModel):
     Corresponde al resumen de una venta asociada a un vendedor y cliente.
     """
     rut: str
+    nombre: str
     codigo: str
     fecha: date
     neto: Optional[float]
@@ -160,6 +162,7 @@ class RegistroOutput(BaseModel):
     correlativos: str  # correlativos del producto numerado asociados de acuerdo a la cantidad solicitada. Separadaso por ;
     pesos: str # los peso de los productos numerados
     fecha: datetime # fecha y hora de la operación
+
 
 class SellCondition(BaseModel):
     """
@@ -235,3 +238,17 @@ class ResumenVentaWeb(BaseModel):
     iva: Optional[float]
     codigo_vendedor: str
     nombre_vendedor: str
+
+class LogRegister(BaseModel):
+    """
+    Estructura que almacena la información de LOG de la notificación de ventas
+    """
+    id: float
+    fecha: datetime
+    vendedor: str
+    tipo: str
+    titulo: str
+    mensaje: str
+    json_parameters: str
+
+

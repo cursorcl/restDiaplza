@@ -676,6 +676,18 @@ t_EOS_CONFIGURACION = Table(
 )
 
 
+t_EOS_LOGVENTAS = Table(
+    'EOS_LOGVENTAS', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('fecha', DateTime),
+    Column('vendedor', String(50, 'SQL_Latin1_General_CP1_CI_AS')),
+    Column('tipo', String(50, 'SQL_Latin1_General_CP1_CI_AS')),
+    Column('titulo', String(50, 'SQL_Latin1_General_CP1_CI_AS')),
+    Column('mensaje', String(collation='SQL_Latin1_General_CP1_CI_AS')),
+    Column('json_parameters', TEXT(2147483647, 'SQL_Latin1_General_CP1_CI_AS'))
+)
+
+
 t_EOS_POSITIONS = Table(
     'EOS_POSITIONS', metadata,
     Column('indice', Integer, primary_key=True),
@@ -2062,18 +2074,4 @@ t_VENTAS_METRICS = Table(
     Column('name', String(50, 'SQL_Latin1_General_CP1_CI_AS')),
     Column('ventaneta', Numeric(18, 0)),
     Column('ventabruta', Numeric(18, 0))
-)
-
-
-t_View_Stock = Table(
-    'View_Stock', metadata,
-    Column('Articulo', String(15, 'SQL_Latin1_General_CP1_CI_AS')),
-    Column('Descripcion', String(40, 'SQL_Latin1_General_CP1_CI_AS')),
-    Column('VentaNeto', MONEY),
-    Column('PorcIla', Float(53)),
-    Column('PorcCarne', Float(53)),
-    Column('Unidad', String(3, 'SQL_Latin1_General_CP1_CI_AS')),
-    Column('Stock', MONEY),
-    Column('Pieces', Integer),
-    Column('Numbered', Integer, nullable=False)
 )

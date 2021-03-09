@@ -1,68 +1,116 @@
-import datetime
-import decimal
-import logging
+import datetime, decimal, json, logging, os, sys, base64
 
-
+from queue import Queue
 from sqlalchemy import func, Integer, cast, Date
-
-from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient
+from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient, Product
+from sqlserver.basedipalza import Session
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
     t_MSOSTTABLAS, t_PARAMETROS, t_FOLIOS, t_TOTALDOCUMENTO, t_MSOSTVENTASILA, t_DETALLEDOCUMENTO, t_ARTICULO, \
-    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES
+    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES, t_INVDETALLEPARTES, t_ARTICULOSNUMERADOS, t_EOS_LOGVENTAS
+from utils.messages import Message, PROGRESS, BILL, ERROR, FINISH, INIT, MISSING
+from utils.util import format_rut_with_points, Registro_Rectificado
+from utils import configuration
 
 logger = logging.getLogger(__name__)
 
 
 class DBProcessor:
 
-    def __init__(self, session):
-        self.session = session
-        register = self.session.query(t_MSOGENERAL).first()
+    def __init__(self, session: Session, queue: Queue):
+
+        self.queue = queue
+        register = session.query(t_MSOGENERAL).first()
         self.iva = register[1]
-        self.electronic_bill_enabled = True
-        self.numero_lineas_factura = 3
-        self.local = "000"
-        self.tipo_documento = "06"
-        self.paridad = 1.0
+
+        self.electronic_bill_enabled = configuration.electronic_bill_enabled
+        self.numero_lineas_factura = configuration.numero_lineas_factura
+        self.local = configuration.local
+        self.tipo_documento = configuration.tipo_documento
+        self.paridad = configuration.paridad
+
         self.electronic_bill = "E" if self.electronic_bill_enabled else " "
-        self.ilas_dict_vacio = self.__obtener_diccionario_tipo_ilas()
+        self.ilas_dict_vacio = self.__obtener_diccionario_tipo_ilas(session)
 
+    def get_product_by_code(self, code, session):
+        t = t_ARTICULO
+        products = session.query(t).filter(t.c.Articulo == code).all()
+        pr = products[0]
 
-    def agregar_registro_numerado(self, input: RegistroInput):
+        p = Product(Articulo=pr.Articulo, Descripcion=pr.Descripcion, VentaNeto=pr.VentaNeto, PorcIla=pr.PorcIla,
+                    PorcCarne=pr.PorcCarne, Unidad=pr.Unidad, Stock=0, Pieces=0, Numbered=False, CodigoIla=pr.CodigoIla)
+
+        t = t_ARTICULOSNUMERADOS
+        exists = session.query(t).filter(t.c.articulo == code).scalar() is not None
+        if exists:
+            # es numerado
+
+            p.Numbered = True
+            t = t_NUMERADOS
+            wc = session.query(func.sum(t.c.peso), func.count(t.c.peso)).filter(t.c.articulo == code).all()
+            if wc and len(wc) > 0:
+                p.Stock = wc[0][0]
+                p.Pieces = wc[0][1]
+        else:
+
+            d = t_DETALLEDOCUMENTO
+            e = t_ENCABEZADOCUMENTO
+            t = t_INVDETALLEPARTES
+            suma = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code,
+                                                                                  t.c.Tipoid == 17,
+                                                                                  t.c.Local == '000').scalar()
+            resta = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code,
+                                                                                   t.c.Tipoid == 18,
+                                                                                   t.c.Local == '000').scalar()
+
+            suma_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d,
+                                                                                                 d.c.Id == e.c.Id).filter(
+                d.c.Tipoid == '09', d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
+            resta_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d,
+                                                                                                  d.c.Id == e.c.Id).filter(
+                d.c.Tipoid.in_(['06', '10']),
+                d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
+            p.Stock = suma - resta + suma_1 - resta_1
+
+        return p
+
+    def agregar_registro_numerado(self, input: RegistroInput, session: Session):
         """
-        Este método siempre va a agregar un registro de un producto numerado
+        Este método siempre va a agregar un registro de un producto numerado.
+        En el caso de solicitar más unidades que las existentes se va a colocar valores 0 tanto en el número, correlativo y peso.
         @param input:  El registro con los valores de entrada a procesar
+        @param session:  La sesión con la que se está procesando la transacción.
         @return: Registro de la BD con todo procesado.
         """
-        # product = self.session.query(t_View_Stock).filter(t_View_Stock.c.articulo == input.articulo).first()
+
+        # Se verifica si existe el producto en la BD.
         t = t_ARTICULO
-        products = self.session.query(t).filter(t.c.Articulo == input.articulo).all()
+        products = session.query(t).filter(t.c.Articulo == input.articulo).all()
         if not products or len(products) == 0:
             return None
-        product = products[0]
-        numbered = self.session.query(t_NUMERADOS).filter(t_NUMERADOS.c.articulo == input.articulo).all()
 
+        # Se extrae solamente el primer producto por si ha trae más elementos.
+        product = products[0]
+        numbered = session.query(t_NUMERADOS).filter(t_NUMERADOS.c.articulo == input.articulo).all()
+
+        # Inicialización de valores
         peso = 0
-        # Estos valores son para poder revertir el proceso si es que se arrepiente
         numeros = ""
         correlativos = ""
         pesos = ""
         nroRegister = int(input.cantidad)
-        articulos =[]
+        articulos = []
         for n in range(nroRegister):
-            # valor por defecto para los elementos
+            # Estos valores se utilizarán cuando el número de registros es mayor que el stock existente del producto
             rpeso = 0
             rnumero = 0
             rcorrelativo = 0
             if n < len(numbered):
-                # solo si n es menor la cantidad de numerados existentes
                 reg = numbered[n]
                 rpeso = reg.peso
                 rnumero = reg.numero
                 rcorrelativo = reg.correlativo
                 stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.articulo == numbered[n].articulo)
-                self.session.execute(stmt)
-                self.session.commit()
+                session.execute(stmt)
 
             peso = peso + rpeso
             numeros = f"{numeros};{rnumero}"
@@ -88,7 +136,6 @@ class DBProcessor:
         code = input.codigo.strip().replace(".", "").replace("-", "")
         code = code.rjust(3, ' ')
 
-
         fecha = input.fecha
 
         ins = t_EOS_REGISTROS.insert().values(rut=input.rut, codigo=code,
@@ -98,9 +145,7 @@ class DBProcessor:
                                               carne=carne, iva=iva, precio=precio, numeros=numeros,
                                               correlativos=correlativos, pesos=pesos,
                                               esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
-        r = self.session.execute(ins)
-        self.session.commit()
-
+        r = session.execute(ins)
 
         return RegistroOutput(
             indice=r.inserted_primary_key[0],
@@ -124,11 +169,11 @@ class DBProcessor:
             codigo_ila=codigo_ila
         )
 
+    def agregar_registro_no_numerado(self, input: RegistroInput, session: Session):
 
-    def agregar_registro_no_numerado(self, input: RegistroInput):
-        # product = self.session.query(t_View_Stock).filter(t_View_Stock.c.Articulo == input.articulo).first()
         t = t_ARTICULO
-        products = self.session.query(t).filter(t.c.Articulo == input.articulo).all()
+
+        products = session.query(t).filter(t.c.Articulo == input.articulo).all()
         if not products or len(products) == 0:
             return None
 
@@ -157,8 +202,7 @@ class DBProcessor:
                                               pesos="",
                                               esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
 
-        r = self.session.execute(ins)
-        self.session.commit()
+        r = session.execute(ins)
 
         return RegistroOutput(
             indice=r.inserted_primary_key[0],
@@ -182,45 +226,45 @@ class DBProcessor:
             codigo_ila=codigo_ila
         )
 
-    def __num_dias_condicion_venta(self, condicion_venta: int):
+    def __num_dias_condicion_venta(self, condicion_venta: int, session: Session):
         """
         Retorna el número de dias de una condicion de venta.
         @return:
         """
         t = t_MSOSTTABLAS
         cond_venta = f"{condicion_venta}".rjust(3, '0')
-        generator = self.session.query(t).filter(t.c.tabla == "009", t.c.codigo == cond_venta).values(t.c.valor)
+        generator = session.query(t).filter(t.c.tabla == "009", t.c.codigo == cond_venta).values(t.c.valor)
         num_dias = next(generator)
         if num_dias:
             return float(num_dias[0]);
         return 0
 
-    def __siguiente_id(self):
+    def __siguiente_id(self, session: Session):
         """
         Se obtiene el id más grande de la tabla encabezado documento, el que corresponde al número a asignarle a la siguiente venta.
         @return: el id que debe establecerse a la venta
         """
         t = t_ENCABEZADOCUMENTO
-        max_id = self.session.query(func.max(cast(t.c.Id, Integer))).scalar()
+        max_id = session.query(func.max(cast(t.c.Id, Integer))).scalar()
         max_id = int(max_id) + 1
         s_max_id = f"{max_id}".rjust(10, "0")
         return s_max_id
 
-    def __siguiente_numero_factura(self):
+    def __siguiente_numero_factura(self, session: Session):
         tipo1 = self.electronic_bill
         t = t_FOLIOS
-        numero_factura = self.session.query(func.max(t.c.Numero)).filter(t.c.Tipo == "06", t.c.TIPO1 == tipo1).scalar()
+        numero_factura = session.query(func.max(t.c.Numero)).filter(t.c.Tipo == "06", t.c.TIPO1 == tipo1).scalar()
         sgte_numero_factura = int(numero_factura) + 1
         s_numero_factura = f"{sgte_numero_factura}".rjust(7, "0")
         return s_numero_factura
 
-    def __obtener_conduccion(self, rut: str):
+    def __obtener_conduccion(self, rut: str, session: Session):
         t = t_MSOCLIENTES
-        generator = self.session.query(t).filter(t.c.Rut == rut).values(t.c.Ruta)
+        generator = session.query(t).filter(t.c.Rut == rut).values(t.c.Ruta)
         register = next(generator, None)
 
         if not register:
-            return  None
+            return None
 
         ruta = register[0]
         codigo = "9997"
@@ -230,18 +274,19 @@ class DBProcessor:
             codigo = "9998"
 
         t = t_MSOSTTABLAS
-        generator = self.session.query(t).filter(t.c.tabla == "015", t.c.codigo == codigo).values(t.c.codigo, t.c.descripcion.label('Descripcion'), t.c.valor)
+        generator = session.query(t).filter(t.c.tabla == "015", t.c.codigo == codigo).values(t.c.codigo, t.c.descripcion.label('Descripcion'),
+                                                                                             t.c.valor)
         register = next(generator, None)
         if not register:
             return None
 
         return register
 
-    def __obtener_diccionario_tipo_ilas(self):
+    def __obtener_diccionario_tipo_ilas(self, session: Session):
         t = t_MSOSTTABLAS
         result = dict()
         try:
-            ilas = self.session.query(t).filter(t.c.descripcion.like("%ILA %")).values(t.c.codigo, t.c.valor)
+            ilas = session.query(t).filter(t.c.descripcion.like("%ILA %")).values(t.c.codigo, t.c.valor)
         except:
             logger.warning(f"No se ha encontrado valores ILA en la tabla t_MSOSTTABLAS")
             return result
@@ -250,82 +295,106 @@ class DBProcessor:
             result[ila[0]] = {"codigo": ila[0], "porcentaje": ila[1], "suma": 0}
         return result
 
-    def eliminar_registro(self, indice: int):
+    def eliminar_registro(self, indice: int, session: Session):
         """
         Al borrar un registro de ventas temporal, se procede a realizar la inserción de los artículos numerados que utiliza
         @param indice: Indice en la BD del registro que se quiere eliminar
         @return:
         """
-        register = self.session.query(t_EOS_REGISTROS).filter(t_EOS_REGISTROS.c.indice == indice).first()
-        if register is None:
-            return None
+        try:
+            register = session.query(t_EOS_REGISTROS).filter(t_EOS_REGISTROS.c.indice == indice).first()
+            if register is None:
+                return None
 
-        if register.esnumerado:
-            numeros = register.numeros.split(";")
-            pesos = register.pesos.split(";")
-            correlativos = register.correlativos.split(";")
-            for n in range(len(numeros)):
-                insert_stmt = t_NUMERADOS.insert().values(
-                    articulo=register.articulo,
-                    correlativo=int(correlativos[n]),
-                    peso=float(pesos[n]),
-                    numero=numeros[n],
-                    narticulo=int(register.articulo))
-                self.session.execute(insert_stmt)
+            if register.esnumerado:
+                numeros = register.numeros.split(";")
+                pesos = register.pesos.split(";")
+                correlativos = register.correlativos.split(";")
+                for n in range(len(numeros)):
+                    insert_stmt = t_NUMERADOS.insert().values(
+                        articulo=register.articulo,
+                        correlativo=int(correlativos[n]),
+                        peso=float(pesos[n]),
+                        numero=numeros[n],
+                        narticulo=int(register.articulo))
+                    session.execute(insert_stmt)
 
-        stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
-        self.session.execute(stmt)
-        self.session.flush()
-        self.session.commit()
+            stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
+            session.execute(stmt)
+            session.commit()
+        except:
+            session.rollback()
+
         return register
 
-    def comision_vendedor(self, confirmation: SaleConfirmByClient):
+    def comision_vendedor(self, confirmation: SaleConfirmByClient, session: Session):
         t = t_MSOVENDEDOR
 
-        try:
-            result = self.session.query(t).filter(t.c.codigo == confirmation.vendedor).values(t.c.comision)
-            r = next(result)
-            comision = r[0]
-        except:
-            logger.warning(f"No se ha encontrado el valor de la comision del vendedor {confirmation.codigo}")
-            return 0
+        result = session.query(t).filter(t.c.codigo == confirmation.vendedor).values(t.c.comision)
+        r = next(result)
+        comision = r[0]
 
         return comision
 
-    def procesar_ventas(self, sale: str):
+    async def procesar_ventas(self, sale: str, session: Session):
         """
         Procesa todas las ventas que se encunentran en los registros para un vendedor.
         """
+        try:
 
-        t = t_EOS_REGISTROS
-        stmt = self.session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha")).filter(t.c.vendedor == sale).distinct()
+            self.grabar_log(Message(INIT, sale, "Ventas", f"Iniciando procesamiento de ventas para el vendedor {sale}"), session)
+            t = t_EOS_REGISTROS
+            stmt = session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha")).filter(
+                t.c.vendedor == sale).distinct()
 
-        result = self.session.execute(stmt)
+            result = session.execute(stmt)
+            registros = list(result)
+            nro_total_registros = len(registros)
+
+            nro_registro = 1
+            for registro in registros:
+                self.grabar_log(Message(PROGRESS, sale, "Procesando Ventas",
+                                       f"Procesando venta de cliente {format_rut_with_points(registro.rut)}",
+                                       nro_registro=nro_registro, nro_total_registros=nro_total_registros), session)
 
 
-        for registro in result:
-            args = registro.fecha.timetuple()[:6]
-            fecha = datetime.datetime(*args)
-            item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
-                                        condicion_venta = "001", fecha = fecha)
-            self.process_venta(item)
+                args = registro.fecha.timetuple()[:6]
+                fecha = datetime.datetime(*args)
+                item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
+                                           condicion_venta="001", fecha=fecha)
+                self.process_venta(item, session)
+                # Notificando
+                nro_registro = nro_registro + 1
+            session.query(t).filter(t.c.vendedor == sale).delete(synchronize_session=False)
+            self.grabar_log(Message(FINISH, sale, "Ventas",
+                              f"Finalizado el proceso de registro de ventas para el vendedor {sale}"), session)
+            session.commit()
+
+        except Exception as ex:
+            self.grabar_log(Message(ERROR, sale, "Error en Procesamiento de Ventas",
+                                   f"Error en el proceso: {sys.exc_info()[0]}"), session)
+            session.rollback()
+            raise
+            return False
+
         return True
 
-    def process_venta(self, confirmation: SaleConfirmByClient):
+    def process_venta(self, confirmation: SaleConfirmByClient, session: Session):
+
         # generar map de los códigos de ILA
         condicion_venta = confirmation.condicion_venta
-        __num_dias_condicion_venta = self.__num_dias_condicion_venta(condicion_venta)
+        __num_dias_condicion_venta = self.__num_dias_condicion_venta(condicion_venta, session)
         fecha_operacion = confirmation.fecha
         fecha_vencimiento = fecha_operacion + datetime.timedelta(days=__num_dias_condicion_venta)
         factura_electronica = self.electronic_bill
-        comision_vendedor = self.comision_vendedor(confirmation)
+        comision_vendedor = self.comision_vendedor(confirmation, session)
 
         r = t_EOS_REGISTROS
         p = t_ARTICULO
 
         # Se obtienen los registros asociados al vendedor, ruta y fecha indicada en el parámetro.
         # La cantidad de registros puede exceder la cantidad de elementos definidos para una factura.
-        registros = self.session.query(r, p). \
+        registros = session.query(r, p). \
             filter(p.c.Articulo == r.c.articulo). \
             filter(r.c.rut == confirmation.rut, r.c.codigo == confirmation.codigo,
                    r.c.vendedor == confirmation.vendedor).values(
@@ -333,12 +402,18 @@ class DBProcessor:
             r.c.codigoila, r.c.ila, r.c.carne, r.c.iva, r.c.precio, r.c.numeros, r.c.correlativos, r.c.pesos,
             r.c.esnumerado, r.c.totalila, p.c.Costo, p.c.Descripcion)
 
-
         facturas = dict()
         correlativo = 0
         # obtengo los registros de cada venta y aprovecho de realizar cálculos
         nro_lineas = 0
         for registro in registros:
+
+            # Se reevalua la cantidad de productos
+            register_rectified = self.get_register_rectified_with_real_stock(registro, session)
+            if register_rectified is None:
+                # quiere decir que el producto no tiene el stock, por tanto pasamos al siguiente.
+                continue
+
             if nro_lineas % self.numero_lineas_factura == 0:
                 nro_lineas = 1
                 correlativo = correlativo + 1
@@ -347,18 +422,20 @@ class DBProcessor:
                 iva_venta = 0
                 carne_venta = 0
                 descuento_venta = 0
-                facturas[correlativo] = { "id": "", "factura": "", "condicion_venta": condicion_venta,
-                    "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
-                    "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
-                    "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
-                    "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
-                    "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": [] }
+                facturas[correlativo] = {"id": "", "factura": "", "condicion_venta": condicion_venta,
+                                         "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
+                                         "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
+                                         "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
+                                         "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
+                                         "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": []}
 
-            neto_venta = neto_venta + registro.neto
-            iva_venta = iva_venta + registro.iva
-            carne_venta = carne_venta + registro.carne
-            descuento_venta = descuento_venta + registro.descuento
-            if registro.ila > 0:
+
+            neto_venta = neto_venta + (0 if registro.neto is None else registro.neto)
+            iva_venta = iva_venta + (0 if registro.iva is None else registro.iva)
+            carne_venta = carne_venta + (0 if registro.carne is None else registro.carne)
+            descuento_venta = descuento_venta + (0 if not registro.descuento else registro.descuento)
+
+            if (not registro.ila is None) and registro.ila > 0:
                 ilas_venta_dict[registro.codigoila]["porcentaje"] = registro.ila
                 ilas_venta_dict[registro.codigoila]["suma"] = ilas_venta_dict[registro.codigoila]["suma"] + registro.ila
 
@@ -370,42 +447,151 @@ class DBProcessor:
             nro_lineas = nro_lineas + 1
 
         # Se agrega registro de conducción.
-        conduccion =  self.__obtener_conduccion(confirmation.rut)
+        conduccion = self.__obtener_conduccion(confirmation.rut, session)
         if conduccion is None:
             pass
         else:
-            factura = facturas[correlativo]
-            neto_venta = factura["total_neto"]
-            if nro_lineas >= self.numero_lineas_factura:
-                correlativo = correlativo + 1
-                facturas[correlativo] = { "id": "", "factura": "", "condicion_venta": condicion_venta,
-                    "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
-                    "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
-                    "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
-                    "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
-                    "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": [] }
+            if correlativo in facturas.keys():
+                factura = facturas[correlativo]
+                neto_venta = factura["total_neto"]
+                if nro_lineas >= self.numero_lineas_factura:
+                    correlativo = correlativo + 1
+                    facturas[correlativo] = {"id": "", "factura": "", "condicion_venta": condicion_venta,
+                                             "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
+                                             "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
+                                             "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
+                                             "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
+                                             "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": []}
 
-            neto_venta = neto_venta + conduccion[2]
-            facturas[correlativo]["registros"].append(conduccion)
-            facturas[correlativo]["total_neto"] = neto_venta
+                neto_venta = neto_venta + conduccion[2]
+                facturas[correlativo]["registros"].append(conduccion)
+                facturas[correlativo]["total_neto"] = neto_venta
+
+        if len(facturas) == 0:
+            return False
 
         for factura in facturas.values():
             # obtengo aquí el número para obtener el último número justo antes de grabar
-            factura["id"] = self.__siguiente_id()
-            factura["factura"] = self.__siguiente_numero_factura()
+            factura["id"] = self.__siguiente_id(session)
+            factura["factura"] = self.__siguiente_numero_factura(session)
             # Grabo de inmediato el folio para no perderlo
-            self.grabar_folios(factura)
-            self.grabar_encabezado(factura)
-            self.grabar_detalle_factura(factura)
-            self.grabar_parametro(factura)
-            self.grabar_total_documento(factura)
-            self.grabar_cuenta_documento(factura)
-            self.grabar_folios(factura)
-            self.grabar_ila(factura)
-        
+            self.grabar_folios(factura, session)
+            self.grabar_encabezado(factura, session)
+            self.grabar_detalle_factura(factura, session)
+            self.grabar_parametro(factura, session)
+            self.grabar_total_documento(factura, session)
+            self.grabar_cuenta_documento(factura, session)
+            self.grabar_ila(factura, session)
+
+            self.grabar_log(Message(BILL, confirmation.vendedor, "Facturas", f"Factura Nro: {factura['factura']}", nro_factura=factura['factura'], nro_id=factura['id']), session)
+
         return True
 
-    def grabar_encabezado(self, factura):
+    def get_register_rectified_with_real_stock(self, registro_original, session):
+
+        rectificated_register = Registro_Rectificado(registro_original._asdict())
+
+        product = self.get_product_by_code(rectificated_register.articulo, session)
+        if product.Numbered:
+            # Obtengo todos los elementos que tienen un 0, ya que fue pedido pero no había stock
+            # Con el fin de volver a revisar si ahora hay stock
+            zero_numbers = list(filter(lambda x: x.strip() == "0", rectificated_register.numeros.split(";")))
+            len_zero_numbers = len(zero_numbers)
+
+            # Tiene el total de su pedido completo
+            if len_zero_numbers == 0:
+                return rectificated_register
+
+            # Se filtran los números, correlativos y pesos que son mayores que 0 y se vuelven a convertir en string separado por ';'
+            rectificated_register.numeros = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.numeros.split(";"))))
+            rectificated_register.correlativos = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.correlativos.split(";"))))
+            rectificated_register.pesos = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.pesos.split(";"))))
+
+            # Se ha pedido más productos de los que habían
+            database_numbered = session.query(t_NUMERADOS).filter(t_NUMERADOS.c.articulo == rectificated_register.articulo).all()
+            len_database_numbered = len(database_numbered)
+
+            requirement_diff = len_zero_numbers - len_database_numbered;
+
+            if (requirement_diff > 0):
+                # Significa que hay unidades que no podrán ser entregadas.
+                self.grabar_log(Message(MISSING, rectificated_register.vendedor, "Faltan unidades ",
+                                       f"Faltan {requirement_diff:.2f} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
+                                       requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
+
+            generated_numbers = ""
+            generated_correlatives = ""
+            generated_weights = ""
+            weight = 0
+
+            for n in range(len(zero_numbers)):
+                if n < len(database_numbered):
+                    reg = database_numbered[n]
+                    rpeso = reg.peso
+                    rnumero = reg.numero
+                    rcorrelativo = reg.correlativo
+                    stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.articulo == database_numbered[n].articulo)
+                    session.execute(stmt)
+                    weight = weight + rpeso
+                    generated_numbers = f"{generated_numbers};{rnumero}"
+                    generated_correlatives = f"{generated_correlatives};{rcorrelativo}"
+                    generated_weights = f"{generated_weights};{rpeso}"
+
+            # se saca el primer ";"
+            generated_numbers = generated_numbers[1:]
+            generated_correlatives = generated_correlatives[1:]
+            generated_weights = generated_weights[1:]
+
+            precio = float(product.VentaNeto)
+            neto = float(weight) * float(precio)
+            dscto = neto * float(rectificated_register.descuento) / 100.0;
+            neto = neto - dscto
+
+            vneto = neto if neto > 0 else 0
+            iva = vneto * float(self.iva) / 100.0
+            carne = vneto * float(product.PorcCarne) / 100.0
+            ila = vneto * float(product.PorcIla) / 100.0
+            codigo_ila = product.CodigoIla
+
+            rectificated_register.cantidad = float(rectificated_register.cantidad) + float(weight)
+            rectificated_register.neto = float(rectificated_register.neto) + vneto
+            rectificated_register.descuento = float(rectificated_register.descuento) + dscto
+            rectificated_register.ila = float(rectificated_register.ila) + ila
+            rectificated_register.carne = float(rectificated_register.carne) + carne
+            rectificated_register.iva = float(rectificated_register.iva) + iva
+            rectificated_register.inumeros = f"{rectificated_register.numeros};{generated_numbers}"
+            rectificated_register.correlativos = f"{rectificated_register.correlativos};{generated_correlatives}"
+            rectificated_register.pesos = f"{rectificated_register.pesos};{generated_weights}"
+
+        else:
+
+            requirement_diff = rectificated_register.cantidad - product.Stock
+            if requirement_diff > 0:
+                # Significa que hay unidades que no podrán ser entregadas.
+                self.grabar_log(Message(MISSING, rectificated_register.vendedor,  "Faltan unidades ",
+                                       f"Fatan {requirement_diff} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
+                                       requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
+
+            rectificated_register.cantidad = min(product.Stock, rectificated_register.cantidad)
+            rectificated_register.TotalLinea = rectificated_register.precio * rectificated_register.cantidad
+            rectificated_register.iva = rectificated_register.TotalLinea * self.iva / 100
+            rectificated_register.ila = float(rectificated_register.TotalLinea) * float(product.PorcIla) / 100.0
+            rectificated_register.descuento = float(rectificated_register.TotalLinea) * float(rectificated_register.descuento) / 100.0
+
+        texto_descripcion = rectificated_register.Descripcion
+
+        if rectificated_register.numeros is not None and rectificated_register.numeros.strip() != ";":
+
+            texto_descripcion = f"{product.Descripcion} [{rectificated_register.numeros}]"
+
+            """
+            Cantidad=rectificated_register.cantidad if "cantidad" in rectificated_register.keys() else 0,
+            Variacion=-rectificated_register.descuento if "descuento" in rectificated_register.keys() else 0,
+            Descripcion=texto_descripcion
+            """
+        return rectificated_register if rectificated_register.cantidad != 0 else None
+
+    def grabar_encabezado(self, factura, session: Session):
         """
         Graba el encabezado de una venta completa
         @param factura: Datos calculados durante el inicio de la facturación.
@@ -427,15 +613,11 @@ class DBProcessor:
                                                   Codigo=codigo_cliente, TIPO1=es_factura_electronica,
                                                   Publicado=0,
                                                   PublicadoNro=numero_factura)
-        # try:
-        self.session.execute(ins)
-        self.session.commit()
-        # except:
-        #    return False
+        session.execute(ins)
 
         return True
 
-    def grabar_detalle_factura(self, factura):
+    def grabar_detalle_factura(self, factura, session: Session):
         t = t_DETALLEDOCUMENTO
         linea = 1
         for registro in factura["registros"]:
@@ -445,29 +627,25 @@ class DBProcessor:
                 texto_descripcion = f"{texto_descripcion} [{registro.numeros}]"
 
             ins = t.insert().values(
-                PrecioVenta= registro.precio if "precio" in registro.keys()   else 0,
-                TotalLinea= registro.neto if "neto" in registro.keys()  else 0,
-                Paridad= self.paridad,
-                PrecioCosto= registro.precio if "precion" in registro.keys()  else 0,
-                Cantidad=registro.cantidad if "cantidad" in registro.keys()  else 0,
+                PrecioVenta=registro.precio if "precio" in registro.keys() else 0,
+                TotalLinea=registro.neto if "neto" in registro.keys() else 0,
+                Paridad=self.paridad,
+                PrecioCosto=registro.precio if "precio" in registro.keys() else 0,
+                Cantidad=registro.cantidad if "cantidad" in registro.keys() else 0,
                 Id=factura["id"],
                 Linea=f"{linea:03}",
                 Tipoid=self.tipo_documento,
                 Local=self.local,
-                Articulo=registro.articulo if "articulo" in registro.keys()  else "000",
-                Variacion=-registro.descuento if "descuento" in registro.keys()  else 0,
+                Articulo=registro.articulo if "articulo" in registro.keys() else "000",
+                Variacion=-registro.descuento if "descuento" in registro.keys() else 0,
                 Descripcion=texto_descripcion
             )
 
-            # try:
-            self.session.execute(ins)
+            session.execute(ins)
             linea = linea + 1
-            # except:
-            #    continue
-        self.session.commit()
         return True
 
-    def grabar_total_documento(self, factura):
+    def grabar_total_documento(self, factura, session: Session):
         """
         Almacena el total del documento que se está almacenando
         @param factura: Datos calculados durante el inicio de la facturación.
@@ -485,15 +663,11 @@ class DBProcessor:
                                 Total=total,
                                 Id=factura['id'],
                                 TipoId=factura["tipo"])
-        # try:
-        self.session.execute(ins)
-        self.session.commit()
-        # except:
-        #    return False
+        session.execute(ins)
 
         return True
 
-    def grabar_cuenta_documento(self, factura):
+    def grabar_cuenta_documento(self, factura, session: Session):
         t = t_CTADOCTO
         total_ila = 0
         for ila in factura["ilas"]:
@@ -517,32 +691,27 @@ class DBProcessor:
             valor_ila=total_ila,
             TIPO1=self.electronic_bill
         )
-        # try:
-        self.session.execute(ins)
-        self.session.commit()
-        # except:
-        #    return False
+        session.execute(ins)
 
         return True
 
-    def grabar_parametro(self, factura):
+    def grabar_parametro(self, factura, session: Session):
         t = t_PARAMETROS
-        upd = t.update().values(FolioDocumento=factura["id"]).returning(t.c.FolioDocumento)
-        self.session.execute(upd)
-        self.session.commit()
+        try:
+            upd = t.update().values(FolioDocumento=factura["id"]).returning(t.c.FolioDocumento)
+            session.execute(upd)
+            session.commit()
+        except:
+            session.rollback()
 
-    def grabar_folios(self, factura):
+    def grabar_folios(self, factura, session: Session):
         t = t_FOLIOS
-        # try:
-        ins = t.insert().values(Numero=factura["factura"], Tipo=factura["tipo"], TIPO1=self.electronic_bill)
-        self.session.execute(ins)
-        self.session.commit()
-        # except:
-        #    return False
 
+        ins = t.insert().values(Numero=factura["factura"], Tipo=factura["tipo"], TIPO1=self.electronic_bill)
+        session.execute(ins)
         return True
 
-    def grabar_ila(self, factura):
+    def grabar_ila(self, factura, session: Session):
         """
         Debe almacenar un registro de ila por cada código diferente que haya en la venta
         @param registro:
@@ -554,11 +723,16 @@ class DBProcessor:
 
             ins = t.insert().values(tipo=factura["tipo"], TIPO1=self.electronic_bill, codigo=ila["codigo"],
                                     valor=ila["suma"], numero=factura["factura"], ila=ila["porcentaje"])
-            self.session.execute(ins)
-            self.session.commit()
+            session.execute(ins)
             # except:
             #    continue
 
-
-    def procesar_rebajar_ventas(self):
+    def procesar_rebajar_ventas(self, session: Session):
         pass
+
+    def grabar_log(self, message: Message, session: Session):
+        self.queue.put(message)
+        params = json.dumps(message.extra_params)
+        t = t_EOS_LOGVENTAS
+        ins = t.insert().values(fecha= datetime.date.today(), vendedor = message.code, tipo = message.type, titulo = message.title, mensaje = message.description, json_parameters = params)
+        session.execute(ins)

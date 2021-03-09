@@ -1,0 +1,14 @@
+{
+  "numero_lineas_factura": 25,
+  "local":"000",
+  "factura_electronica": true,
+  "paridad": 1,
+  "tipo_documento": "06",
+  "database_ip": "192.168.0.8",
+  "database_port": "1433",
+  "database_user": "c2E=",
+  "database_password": "X2wyajFyczI=",
+  "database_name": "TUFTVEVSU09GVA==",
+  "validar_stock": false
+
+}

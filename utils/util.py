@@ -1,8 +1,36 @@
 from passlib.context import CryptContext
 from models.user_model import RegistroOutput
 from sqlserver.db_name import t_EOS_REGISTROS
+import datetime
 
 import re
+
+
+# Clase de poyo al proceso de rectificación de unidades en la venta
+class Registro_Rectificado:
+   def __init__(self, dict: dict):
+       self.codigo = dict['codigo']
+       self.vendedor = dict['vendedor']
+       self.fila = dict['fila']
+       self.fecha = dict['fecha']
+       self.articulo = dict['articulo']
+       self.cantidad = dict['cantidad']
+       self.neto = dict['neto']
+       self.descuento = dict['descuento']
+       self.codigoila = dict['codigoila']
+       self.ila = dict['ila']
+       self.rut = dict['rut']
+       self.carne = dict['carne']
+       self.iva = dict['iva']
+       self.precio = dict['precio']
+       self.numeros = dict['numeros']
+       self.correlativos = dict['correlativos']
+       self.pesos = dict['pesos']
+       self.esnumerado = dict['esnumerado']
+       self.totalila = dict['totalila']
+       self.Costo = dict['Costo']
+       self.Descripcion = dict['Descripcion']
+
 
 pwd_context = CryptContext(
         schemes=["pbkdf2_sha256"],
@@ -136,4 +164,6 @@ def float_lon_to_str(lon: float):
     l = (l - m) * 60
     s = l
     return f"{g:03}º{m:02}'{s:05.02f}''[{h}]"
+
+
 

@@ -1,14 +1,21 @@
 from sqlalchemy import create_engine, MetaData, Table, Column, String, DateTime, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import datetime
+import datetime, base64
+from utils import configuration
 
-from utils.util import pwd_context, encrypt_password
+user = base64.b64decode(configuration.database_user).decode('utf-8')
+password = base64.b64decode(configuration.database_password).decode('utf-8')
+database_name = base64.b64decode(configuration.database_name).decode('utf-8')
+db_ip = configuration.database_ip
+db_port = configuration.database_port
 
-engine = create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format('sa', '_l2j1rs2', '192.168.0.8', '1433', 'MASTERSOFT'))
+engine =create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format(user, password, db_ip, db_port, database_name))
 
 # create a configured 'Session' class
-Session = sessionmaker(bind=engine)
+Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
 
 # create a Session
 session = Session()
@@ -29,5 +36,6 @@ if not engine.has_table('EOS_USUARIOS'):
 
 
 Base = declarative_base()
+
 
 
