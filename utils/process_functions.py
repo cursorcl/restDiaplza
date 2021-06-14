@@ -45,13 +45,25 @@ class DBProcessor:
             # es numerado
 
             p.Numbered = True
+            """
             t = t_NUMERADOS
-            wc = session.query(func.sum(t.c.peso), func.count(t.c.peso)).filter(t.c.articulo == code).all()
+            wc = session.query(func.coalesce(func.sum(t.c.peso), 0), func.count(t.c.peso)).filter(t.c.articulo == code).all()
             if wc and len(wc) > 0:
-                p.Stock = wc[0][0]
-                p.Pieces = wc[0][1]
+                p.Stock = wc[0][0] if wc[0][0] else 0
+                p.Pieces = wc[0][1] if wc[0][1] else 0
+            """
+            result = session.execute(f"EXEC dbo.calcularStockNumerado @id={code}")
+            try:
+                v = result.first()
+                p.Stock = v[1]
+                p.Pieces = v[2]
+            except:
+                p.Stock = 0
+                p.Pieces = 0
         else:
 
+            result = session.execute(f"EXEC dbo.calcularStock @id={code}")
+            """
             d = t_DETALLEDOCUMENTO
             e = t_ENCABEZADOCUMENTO
             t = t_INVDETALLEPARTES
@@ -70,6 +82,12 @@ class DBProcessor:
                 d.c.Tipoid.in_(['06', '10']),
                 d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
             p.Stock = suma - resta + suma_1 - resta_1
+            """
+            try:
+                v = result.first()
+                p.Stock = v[0]
+            except:
+                p.Stock = 0
 
         return p
 
@@ -144,7 +162,7 @@ class DBProcessor:
                                               ila=ila,
                                               carne=carne, iva=iva, precio=precio, numeros=numeros,
                                               correlativos=correlativos, pesos=pesos,
-                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
+                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock, condicionventa = input.condicionventa)
         r = session.execute(ins)
 
         return RegistroOutput(
@@ -166,7 +184,8 @@ class DBProcessor:
             correlativos=correlativos,
             pesos=pesos,
             esnumerado=input.esnumerado,
-            codigo_ila=codigo_ila
+            codigo_ila=codigo_ila,
+            condicionventa=input.condicionventa
         )
 
     def agregar_registro_no_numerado(self, input: RegistroInput, session: Session):
@@ -193,17 +212,16 @@ class DBProcessor:
 
         code = input.codigo.strip().replace(".", "").replace("-", "")
         code = code.rjust(3, ' ')
-        fecha = input.fecha
+        fecha = input.fecha.strftime('%Y-%m-%d %H:%M:%S')
         ins = t_EOS_REGISTROS.insert().values(rut=input.rut, codigo=code,
                                               vendedor=input.vendedor, fila=input.fila, fecha=fecha,
-                                              articulo=input.articulo, cantidad=cantidad, neto=vneto, descuento=dscto,
+                                              articulo=input.articulo, cantidad=cantidad, neto=float(vneto), descuento=float(dscto),
                                               ila=ila,
-                                              carne=carne, iva=iva, precio=precio, numeros="", correlativos="",
+                                              carne=carne, iva=float(iva), precio=float(precio), numeros="", correlativos="",
                                               pesos="",
                                               esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
 
         r = session.execute(ins)
-
         return RegistroOutput(
             indice=r.inserted_primary_key[0],
             rut=input.rut,

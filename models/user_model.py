@@ -41,6 +41,7 @@ class Seller(BaseModel):
     nombre: str
 
 
+
 class Route(BaseModel):
     codigo: str
     descripcion: str
@@ -139,6 +140,7 @@ class RegistroInput(BaseModel):
     esnumerado: bool  # indicador si el producto es numerado
     sobrestock: bool  # indicador si el vendedor está solicitando más productos que los que existen.
     fecha: datetime # fecha de la venta
+    condicionventa: str # Condición Venta
 
 class RegistroOutput(BaseModel):
     """
@@ -162,6 +164,7 @@ class RegistroOutput(BaseModel):
     correlativos: str  # correlativos del producto numerado asociados de acuerdo a la cantidad solicitada. Separadaso por ;
     pesos: str # los peso de los productos numerados
     fecha: datetime # fecha y hora de la operación
+    condicionventa: str # Condición de venta
 
 
 class SellCondition(BaseModel):
@@ -170,7 +173,7 @@ class SellCondition(BaseModel):
     """
     codigo: str
     descripcion: str
-    valor: float
+
 
 
 class SaleConfirmByClient(BaseModel):
@@ -231,6 +234,7 @@ class ResumenVentaWeb(BaseModel):
     codigo: str
     nombre: str
     fecha: date
+    condicionventa: str
     neto: Optional[float]
     descuento: Optional[float]
     totalila: Optional[float]

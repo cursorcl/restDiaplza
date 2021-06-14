@@ -70,10 +70,15 @@ async def unicorn_exception_handler(request: Request, exc: DipalzaException):
     )
 
 
-def init():
+def get_dbProcessor():
     global dbProcessor, queue
+    if dbProcessor:
+        return dbProcessor
+
     session = next(get_db())
     dbProcessor = DBProcessor(session, queue)
+
+    return dbProcessor
 
 
 @app.post('/login', response_model=User)
@@ -94,6 +99,8 @@ async def login(user: UserLogin):
         password = password_bytes.decode('ascii')
         m = hashlib.sha1(password.encode('utf-8'))
         if m.digest() == clave[0].password:
+            upd = t_EOS_USUARIOS.update().where(t_EOS_USUARIOS.c.rut == r).values(lastlogin = datetime.datetime.now())
+            session.execute(upd)
             return User(code=vendedor[0].codigo, name=vendedor[0].nombre, rut=r, token="123")
         else:
             raise HTTPException(status_code=400, detail="Clave incorrecta")
@@ -108,12 +115,13 @@ async def read_routes():
     """
     try:
         session = next(get_db())
-        rutas = session.query(t_MSOSTTABLAS).filter(t_MSOSTTABLAS.columns.tabla == "008").all()
+        rutas = session.query(t_MSOSTTABLAS).filter(t_MSOSTTABLAS.columns.tabla == "017").all()
         result = to_array_of_json(rutas, t_MSOSTTABLAS, columns=("codigo", "descripcion"))
         return result
     except:
         logger.error("Error al tratar de obtener listado de rutas")
         raise HTTPException(status_code=400, detail="No existen rutas")
+
 
 
 @app.get('/sellers', response_model=List[Seller])
@@ -147,9 +155,20 @@ async def get_sell_conditions():
     """
     Obtiene listado de condiciones de venta.
     """
-    condtions = t_MSOSTTABLAS.filter(t_MSOSTTABLAS.c.tabla == "009").values("codigo", "descripcion", "valor")
-    result = to_array_of_json(condtions, t_MSOSTTABLAS, columns=("codigo", "descripcion", "valor"))
-    return result
+    session = next(get_db())
+    t = t_MSOSTTABLAS
+    condtions = session.query(t).filter(t.c.tabla == "009").values("codigo", "descripcion")
+
+    lst = []
+    for r in condtions:
+        d = SellCondition(
+            codigo=r[0],
+            descripcion=r[1]
+        )
+        lst.append(d)
+
+    return lst
+
 
 
 @app.get('/clients/seller/{seller}/route/{route}', response_model=List[Client])
@@ -168,7 +187,8 @@ async def read_clients_of_seller_and_route(seller: str, route: str):
 
 @app.get('/client/rut/{rut}', response_model=List[Client])
 async def read_client_by_rut(rut: str):
-    """Obtiene listado de clientes que cumplen un rut.
+    """
+    Obtiene listado de clientes que cumplen un rut.
     Un cliente puede tener varias sucursales, cada una tiene el mismo rut y diferente código.
     :param rut Rut del usuario que se busca
     @return:  Datos del cliente
@@ -216,10 +236,17 @@ async def delete_pieces_by_correlative(correlative: int):
     """
     session = next(get_db())
     numbered = session.query(t_NUMERADOS).filter(t_NUMERADOS.correlativo == correlative).delete()
-    session.flush()
-    session.commit()
     return Pieces.parse_obj(numbered)
 
+@app.get('/products', response_model=List[FProduct])
+async def read_products():
+    """
+    Obtiene listado de productos desde la BD.
+    @return: listado de FProduct
+    """
+    session = next(get_db())
+    products = session.query(t_ARTICULO).all()
+    return to_array_of_json(products, t_ARTICULO)
 
 @app.get('/fproducts', response_model=List[FProduct])
 async def read_fast_products():
@@ -233,6 +260,17 @@ async def read_fast_products():
     return to_array_of_json(products, t_ARTICULO)
 
 
+@app.get('/product/code/{code}', response_model=Product)
+async def read_product_by_code(code: str):
+    """
+    Obtiene el producto asociado el código
+    @param code:  Código de producto
+    @return:  Producto asociado al códigp
+    """
+    session = next(get_db())
+    p = get_dbProcessor().get_product_by_code(code, session)
+    return p
+
 @app.get('/fproduct/code/{code}', response_model=Product)
 async def read_fast_product_by_code(code: str):
     """
@@ -241,7 +279,7 @@ async def read_fast_product_by_code(code: str):
     @return:  El producto con su stock.
     """
     session = next(get_db())
-    p = dbProcessor.get_product_by_code(code, session)
+    p = get_dbProcessor().get_product_by_code(code, session)
     return p
 
 
@@ -284,19 +322,19 @@ async def register_item_temporal_sale(registro: RegistroInput):
     :param : registro (RegistroInput): Registro con la información asociado a una venta.
     @return:  RegistroOutput: el registro almacenado
     """
-    global dbProcessor
+
     session = next(get_db())
     if registro.indice != 0:
-        dbProcessor.eliminar_registro(registro.indice, session)
+        get_dbProcessor().eliminar_registro(registro.indice, session)
 
     if registro.esnumerado:
-        register = dbProcessor.agregar_registro_numerado(registro, session)
+        register = get_dbProcessor().agregar_registro_numerado(registro, session)
         if not register:
             return Response("Hay 0 item de este producto", status_code=405)
         logger.info(f"EOS--> {type(register)}")
         return register
 
-    register = dbProcessor.agregar_registro_no_numerado(registro, session)
+    register = get_dbProcessor().agregar_registro_no_numerado(registro, session)
     if register is None:
         return Response("Hay 0 item de este producto", status_code=405)
     return register
@@ -309,9 +347,8 @@ async def delete_register_item_temporal_sale(registro: RegistroInput):
     :param registro (RegistroInput): El registro que se quiere eliminar
     @return:  RegistroInput: el registro eliminado
     """
-    global dbProcessor
     session = next(get_db())
-    register = dbProcessor.eliminar_registro(registro.indice, session, response_class=ORJSONResponse)
+    register = get_dbProcessor().eliminar_registro(registro.indice, session, response_class=ORJSONResponse)
     return register
 
 
@@ -322,9 +359,9 @@ async def delete_register_item_temporal_sale(indice: int):
     :param indice:  El indice de BD del elemento
     @return: ORJSONResponse: el registro eliminado
     """
-    global dbProcessor
+
     session = next(get_db())
-    register = dbProcessor.eliminar_registro(indice, session)
+    register = get_dbProcessor().eliminar_registro(indice, session)
     json_compatible_item_data = jsonable_encoder(register)
     return JSONResponse(content=json_compatible_item_data)
 
@@ -335,10 +372,10 @@ async def register_sales_by_sale(sale: SellerCode):
     Registra todas las ventas realizadas, y sin confirmar del vendedor
     :param sale: vendedor al que se le quiere registrar todas sus ventas.
     """
-    global dbProcessor, queue
+    global queue
 
     session = next(get_db())
-    result = await dbProcessor.procesar_ventas(sale.codigo, session)
+    result = await get_dbProcessor().procesar_ventas(sale.codigo, session)
 
     return result
 
@@ -366,7 +403,7 @@ async def list_sales():
     t = t_EOS_REGISTROS
     stmt = session.query(
         t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),
-        t.c.vendedor.label("codigo_vendedor"), func.sum(t.c.neto).label('neto'),
+        t.c.vendedor.label("codigo_vendedor"),t.c.condicionventa.label('condicionventa'), func.sum(t.c.neto).label('neto'),
         func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
         func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva')) \
         .group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.vendedor).order_by(t.c.fecha.cast(Date), t.c.vendedor, t.c.rut)
@@ -392,6 +429,7 @@ async def list_sales():
                 codigo=r.codigo,
                 nombre=nombre_cliente,
                 fecha=r.fecha,
+                condicionventa=r.condicionventa,
                 neto=r.neto,
                 descuento=r.descuento,
                 totalila=r.totalila,
@@ -402,7 +440,7 @@ async def list_sales():
             )
             lst.append(d)
         except:
-            dbProcessor.grabar_log(Message(ERROR, codigo_vendedor, "El rut {rut} no existe en el sistema.", f"Error en el proceso: {sys.exc_info()[0]}"), session)
+            get_dbProcessor().grabar_log(Message(ERROR, codigo_vendedor, "El rut {rut} no existe en el sistema.", f"Error en el proceso: {sys.exc_info()[0]}"), session)
 
     return lst
 
@@ -473,7 +511,8 @@ async def list_sale_by_sale_by_rut_by_date(sale: str, rut: str, date: int):
 
 @app.get('/listonesale/{sale}/{rut}/{code}/{date}', response_model=List[RegistroOutput])
 async def list_one_sale_by_sale_by_rut_by_date(sale: str, rut: str, code: str, date: str):
-    """Listado de todos los registros de ventas por vendedor y cliente-código en una fecha determinada.
+    """
+    Listado de todos los registros de ventas por vendedor y cliente-código en una fecha determinada.
     :param sale (str): Código del vendedor
     :param rut (str): Rut del cliente.
     :param code (str): Código del cliente.
@@ -505,14 +544,16 @@ async def list_one_sale_by_sale_by_rut_by_date(sale: str, rut: str, code: str, d
             numeros=r.numeros if r.numeros != None else "",
             correlativos=r.correlativos if r.correlativos != None else "",
             pesos=r.pesos if r.pesos != None else "",
-            fecha=r.fecha)
+            fecha=r.fecha,
+            condicionventa=r.condicionventa)
         results.append(d)
     return results
 
 
 @app.get('/listsales/sale/{sale}/rut/{rut}/code/{code}/date/{date}')
 async def list_sale_by_sale_by_rut_by_date(sale: str, rut: str, code: str, date: int):
-    """Listado de todos los registros de ventas por vendedor y cliente-código en una fecha determinada.
+    """
+    Listado de todos los registros de ventas por vendedor y cliente-código en una fecha determinada.
 
     :param sale (str): Código del vendedor
     :param rut (str): Rut del cliente.
@@ -545,8 +586,6 @@ async def register_position(pos: PositionRegister):
     stmt = t.insert().values(vendedor=pos.vendedor, fecha=pos.fecha, latitude=pos.latitude, longitude=pos.longitude,
                              velocidad=pos.velocidad)
     r = session.execute(stmt)
-    session.flush()
-    session.commit()
     indice = r.inserted_primary_key[0]
     return PositionRegisterOutput(
         indice=indice,
@@ -711,5 +750,5 @@ async def registers_log_code_fecha(code: str, date: datetime.datetime):
 
 
 if __name__ == "__main__":
-    init()
-    uvicorn.run(app, host="0.0.0.0", port=7000, debug=True)
+    get_dbProcessor()
+    uvicorn.run(app, host="0.0.0.0", port=8888, debug=True)

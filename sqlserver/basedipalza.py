@@ -13,7 +13,7 @@ db_port = configuration.database_port
 engine =create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format(user, password, db_ip, db_port, database_name))
 
 # create a configured 'Session' class
-Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Session = sessionmaker(autocommit=True, autoflush=True, bind=engine)
 
 
 
