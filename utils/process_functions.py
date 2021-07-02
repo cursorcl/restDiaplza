@@ -127,7 +127,7 @@ class DBProcessor:
                 rpeso = reg.peso
                 rnumero = reg.numero
                 rcorrelativo = reg.correlativo
-                stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.articulo == numbered[n].articulo)
+                stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.correlativo == reg.correlativo)
                 session.execute(stmt)
 
             peso = peso + rpeso
@@ -219,7 +219,7 @@ class DBProcessor:
                                               ila=ila,
                                               carne=carne, iva=float(iva), precio=float(precio), numeros="", correlativos="",
                                               pesos="",
-                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock)
+                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock, condicionventa=input.condicionventa)
 
         r = session.execute(ins)
         return RegistroOutput(
@@ -241,7 +241,9 @@ class DBProcessor:
             correlativos="",
             pesos="",
             esnumerado=input.esnumerado,
-            codigo_ila=codigo_ila
+            codigo_ila=codigo_ila,
+            condicionventa=input.condicionventa
+
         )
 
     def __num_dias_condicion_venta(self, condicion_venta: int, session: Session):
@@ -331,16 +333,16 @@ class DBProcessor:
                 for n in range(len(numeros)):
                     insert_stmt = t_NUMERADOS.insert().values(
                         articulo=register.articulo,
-                        correlativo=int(correlativos[n]),
+                        #correlativo=int(correlativos[n]),
                         peso=float(pesos[n]),
                         numero=numeros[n],
                         narticulo=int(register.articulo))
                     session.execute(insert_stmt)
-
-            stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
-            session.execute(stmt)
-            session.commit()
+                    stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
+                    session.execute(stmt)
+            #session.commit()
         except:
+            print( sys.exc_info()[0])
             session.rollback()
 
         return register
@@ -386,7 +388,7 @@ class DBProcessor:
             session.query(t).filter(t.c.vendedor == sale).delete(synchronize_session=False)
             self.grabar_log(Message(FINISH, sale, "Ventas",
                               f"Finalizado el proceso de registro de ventas para el vendedor {sale}"), session)
-            session.commit()
+            #session.commit()
 
         except Exception as ex:
             self.grabar_log(Message(ERROR, sale, "Error en Procesamiento de Ventas",
@@ -583,7 +585,7 @@ class DBProcessor:
 
         else:
 
-            requirement_diff = rectificated_register.cantidad - product.Stock
+            requirement_diff = float(rectificated_register.cantidad) - product.Stock
             if requirement_diff > 0:
                 # Significa que hay unidades que no podrán ser entregadas.
                 self.grabar_log(Message(MISSING, rectificated_register.vendedor,  "Faltan unidades ",
@@ -641,23 +643,39 @@ class DBProcessor:
         for registro in factura["registros"]:
             texto_descripcion = registro.Descripcion
 
-            if "numeros" in registro.keys() and registro.numeros != None and registro.numeros.strip() != "":
-                texto_descripcion = f"{texto_descripcion} [{registro.numeros}]"
+            if texto_descripcion == "CONDUCCION":
+                ins = t.insert().values(
+                    PrecioVenta=registro.precio if "precio" in registro.keys() else 0,
+                    TotalLinea=registro.neto if "neto" in registro.keys() else 0,
+                    Paridad=self.paridad,
+                    PrecioCosto=registro.precio if "precio" in registro.keys() else 0,
+                    Cantidad=registro.cantidad if "cantidad" in registro.keys() else 0,
+                    Id=factura["id"],
+                    Linea=f"{linea:03}",
+                    Tipoid=self.tipo_documento,
+                    Local=self.local,
+                    Articulo=registro.articulo if "articulo" in registro.keys() else "000",
+                    Variacion=-registro.descuento if "descuento" in registro.keys() else 0,
+                    Descripcion=texto_descripcion
+                )
+            else:
+                if "numeros" in registro.keys() and registro.numeros != None and registro.numeros.strip() != "":
+                    texto_descripcion = f"{texto_descripcion} [{registro.numeros}]"
 
-            ins = t.insert().values(
-                PrecioVenta=registro.precio if "precio" in registro.keys() else 0,
-                TotalLinea=registro.neto if "neto" in registro.keys() else 0,
-                Paridad=self.paridad,
-                PrecioCosto=registro.precio if "precio" in registro.keys() else 0,
-                Cantidad=registro.cantidad if "cantidad" in registro.keys() else 0,
-                Id=factura["id"],
-                Linea=f"{linea:03}",
-                Tipoid=self.tipo_documento,
-                Local=self.local,
-                Articulo=registro.articulo if "articulo" in registro.keys() else "000",
-                Variacion=-registro.descuento if "descuento" in registro.keys() else 0,
-                Descripcion=texto_descripcion
-            )
+                ins = t.insert().values(
+                    PrecioVenta=registro.precio if "precio" in registro.keys() else 0,
+                    TotalLinea=registro.neto if "neto" in registro.keys() else 0,
+                    Paridad=self.paridad,
+                    PrecioCosto=registro.precio if "precio" in registro.keys() else 0,
+                    Cantidad=registro.cantidad if "cantidad" in registro.keys() else 0,
+                    Id=factura["id"],
+                    Linea=f"{linea:03}",
+                    Tipoid=self.tipo_documento,
+                    Local=self.local,
+                    Articulo=registro.articulo if "articulo" in registro.keys() else "000",
+                    Variacion=-registro.descuento if "descuento" in registro.keys() else 0,
+                    Descripcion=texto_descripcion
+                )
 
             session.execute(ins)
             linea = linea + 1

@@ -123,6 +123,8 @@ class ResumenVenta(BaseModel):
     totalila: Optional[float]
     carne: Optional[float]
     iva: Optional[float]
+    condicionventacode: str
+
 
 
 class RegistroInput(BaseModel):

@@ -5,15 +5,17 @@ import hashlib
 import logging
 import queue
 import sys
+
 from typing import List
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.params import Query
 from fastapi.responses import ORJSONResponse
-from sqlalchemy import Date, text
-from sqlalchemy import func
+from sqlalchemy import Date, text, func
 from sse_starlette.sse import EventSourceResponse
+
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
@@ -28,6 +30,13 @@ from sqlserver.db_name import t_MSOVENDEDOR, t_MSOSTTABLAS, t_MSOCLIENTES, t_ENC
 from utils.messages import Message, ERROR
 from utils.process_functions import DBProcessor
 from utils.util import to_array_of_json, to_item_json, format_rut_with_points, format_position
+
+import graphene
+from starlette.graphql import GraphQLApp
+
+from queries.ventas import QueryVenta, QueryEncabezado
+
+
 
 # create logger with log app
 logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
@@ -169,7 +178,21 @@ async def get_sell_conditions():
 
     return lst
 
-
+@app.get('/sellcondition/{code}', response_model=SellCondition)
+async def get_sell_condition(code: str):
+    """
+    Obtiene la condicion de venta con el código.
+    """
+    session = next(get_db())
+    t = t_MSOSTTABLAS
+    items = session.query(t).filter(t.c.tabla == "009", t.c.codigo == code).values("codigo", "descripcion")
+    for r in items:
+        condition = SellCondition(
+            codigo=r[0],
+            descripcion=r[1]
+        )
+        break
+    return condition
 
 @app.get('/clients/seller/{seller}/route/{route}', response_model=List[Client])
 async def read_clients_of_seller_and_route(seller: str, route: str):
@@ -406,7 +429,7 @@ async def list_sales():
         t.c.vendedor.label("codigo_vendedor"),t.c.condicionventa.label('condicionventa'), func.sum(t.c.neto).label('neto'),
         func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
         func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva')) \
-        .group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.vendedor).order_by(t.c.fecha.cast(Date), t.c.vendedor, t.c.rut)
+        .group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.vendedor, t.c.condicionventa).order_by(t.c.fecha.cast(Date), t.c.vendedor, t.c.rut)
 
     result = session.execute(stmt)
 
@@ -462,11 +485,11 @@ async def list_sales_by_sale(sale: str):
 
     t = t_EOS_REGISTROS
     stmt = session.query(
-        t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),
+        t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),t.c.condicionventa.label('condicionventacode'),
         func.sum(t.c.neto).label('neto'),
         func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
         func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva')) \
-        .filter(t.c.vendedor == sale).group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date))
+        .filter(t.c.vendedor == sale).group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.condicionventa)
 
     result = session.execute(stmt)
 
@@ -480,6 +503,7 @@ async def list_sales_by_sale(sale: str):
             codigo=r.codigo,
             nombre=nombre_cliente,
             fecha=r.fecha,
+            condicionventacode = r.condicionventacode,
             neto=r.neto,
             descuento=r.descuento,
             totalila=r.totalila,
@@ -746,6 +770,12 @@ async def registers_log_code_fecha(code: str, date: datetime.datetime):
     return result
 
 
+
+
+
+
+app.add_route("/graphqlventas", GraphQLApp(schema=graphene.Schema(query=QueryVenta)))
+app.add_route("/graphqlencabezado", GraphQLApp(schema=graphene.Schema(query=QueryEncabezado)))
 
 
 
