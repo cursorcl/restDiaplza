@@ -364,7 +364,7 @@ class DBProcessor:
 
             self.grabar_log(Message(INIT, sale, "Ventas", f"Iniciando procesamiento de ventas para el vendedor {sale}"), session)
             t = t_EOS_REGISTROS
-            stmt = session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha")).filter(
+            stmt = session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"), t.c.condicionventa.label('condicionventa')).filter(
                 t.c.vendedor == sale).distinct()
 
             result = session.execute(stmt)
@@ -381,7 +381,7 @@ class DBProcessor:
                 args = registro.fecha.timetuple()[:6]
                 fecha = datetime.datetime(*args)
                 item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
-                                           condicion_venta="001", fecha=fecha)
+                                           condicion_venta=registro.condicionventa, fecha=fecha)
                 self.process_venta(item, session)
                 # Notificando
                 nro_registro = nro_registro + 1
@@ -456,8 +456,9 @@ class DBProcessor:
             descuento_venta = descuento_venta + (0 if not registro.descuento else registro.descuento)
 
             if (not registro.ila is None) and registro.ila > 0:
-                ilas_venta_dict[registro.codigoila]["porcentaje"] = registro.ila
-                ilas_venta_dict[registro.codigoila]["suma"] = ilas_venta_dict[registro.codigoila]["suma"] + registro.ila
+                codigo_ila = registro.codigoila.strip()
+                ilas_venta_dict[codigo_ila]["porcentaje"] = codigo_ila
+                ilas_venta_dict[codigo_ila]["suma"] = ilas_venta_dict[codigo_ila]["suma"] + registro.ila
 
             facturas[correlativo]["registros"].append(registro)
             facturas[correlativo]["total_neto"] = neto_venta
@@ -593,8 +594,8 @@ class DBProcessor:
                                        requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
 
             rectificated_register.cantidad = min(product.Stock, rectificated_register.cantidad)
-            rectificated_register.TotalLinea = rectificated_register.precio * rectificated_register.cantidad
-            rectificated_register.iva = rectificated_register.TotalLinea * self.iva / 100
+            rectificated_register.TotalLinea = float(rectificated_register.precio) * float(rectificated_register.cantidad)
+            rectificated_register.iva = float(rectificated_register.TotalLinea) * float(self.iva) / 100
             rectificated_register.ila = float(rectificated_register.TotalLinea) * float(product.PorcIla) / 100.0
             rectificated_register.descuento = float(rectificated_register.TotalLinea) * float(rectificated_register.descuento) / 100.0
 
