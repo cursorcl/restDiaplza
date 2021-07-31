@@ -6,7 +6,7 @@ from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient
 from sqlserver.basedipalza import Session
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
     t_MSOSTTABLAS, t_PARAMETROS, t_FOLIOS, t_TOTALDOCUMENTO, t_MSOSTVENTASILA, t_DETALLEDOCUMENTO, t_ARTICULO, \
-    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES, t_INVDETALLEPARTES, t_ARTICULOSNUMERADOS, t_EOS_LOGVENTAS
+    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES, t_INVDETALLEPARTES, t_ARTICULOSNUMERADOS, t_EOS_LOGVENTAS, t_EOS_FALTANTES
 from utils.messages import Message, PROGRESS, BILL, ERROR, FINISH, INIT, MISSING
 from utils.util import format_rut_with_points, Registro_Rectificado
 from utils import configuration
@@ -43,15 +43,7 @@ class DBProcessor:
         exists = session.query(t).filter(t.c.articulo == code).scalar() is not None
         if exists:
             # es numerado
-
             p.Numbered = True
-            """
-            t = t_NUMERADOS
-            wc = session.query(func.coalesce(func.sum(t.c.peso), 0), func.count(t.c.peso)).filter(t.c.articulo == code).all()
-            if wc and len(wc) > 0:
-                p.Stock = wc[0][0] if wc[0][0] else 0
-                p.Pieces = wc[0][1] if wc[0][1] else 0
-            """
             result = session.execute(f"EXEC dbo.calcularStockNumerado @id={code}")
             try:
                 v = result.first()
@@ -63,26 +55,6 @@ class DBProcessor:
         else:
 
             result = session.execute(f"EXEC dbo.calcularStock @id={code}")
-            """
-            d = t_DETALLEDOCUMENTO
-            e = t_ENCABEZADOCUMENTO
-            t = t_INVDETALLEPARTES
-            suma = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code,
-                                                                                  t.c.Tipoid == 17,
-                                                                                  t.c.Local == '000').scalar()
-            resta = session.query(func.coalesce(func.sum(t.c.Cantidad), 0)).filter(t.c.Articulo == code,
-                                                                                   t.c.Tipoid == 18,
-                                                                                   t.c.Local == '000').scalar()
-
-            suma_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d,
-                                                                                                 d.c.Id == e.c.Id).filter(
-                d.c.Tipoid == '09', d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
-            resta_1 = session.query(func.coalesce(func.sum(d.c.Cantidad), 0)).select_from(e).join(d,
-                                                                                                  d.c.Id == e.c.Id).filter(
-                d.c.Tipoid.in_(['06', '10']),
-                d.c.Local == '000', e.c.Vigente == 1, d.c.Articulo == code).scalar()
-            p.Stock = suma - resta + suma_1 - resta_1
-            """
             try:
                 v = result.first()
                 p.Stock = v[0]
@@ -540,6 +512,17 @@ class DBProcessor:
                                        f"Faltan {requirement_diff:.2f} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
                                        requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
 
+                # Aquí debo agregar registro de faltante de stock
+                t_EOS_FALTANTES.insert().values(
+                    rut=rectificated_register.rut, codigo=rectificated_register.codigo,
+                    vendedor=rectificated_register.vendedor, fila=rectificated_register.fila, fecha=fecha,
+                    articulo=rectificated_register.articulo, cantidad=float(requirement_diff), neto=float(0), descuento=float(0),
+                    ila=0,
+                    carne=0, iva=float(0), precio=float(product.VentaNeto), numeros="", correlativos="",
+                    pesos="",
+                    esnumerado=input.esnumerado, codigoila="", sobrestock=input.sobrestock, condicionventa=input.condicionventa
+                )
+
             generated_numbers = ""
             generated_correlatives = ""
             generated_weights = ""
@@ -592,6 +575,18 @@ class DBProcessor:
                 self.grabar_log(Message(MISSING, rectificated_register.vendedor,  "Faltan unidades ",
                                        f"Fatan {requirement_diff} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
                                        requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
+
+                # Aquí debo agregar registro de faltante de stock
+                t_EOS_FALTANTES.insert().values(
+                    rut=rectificated_register.rut, codigo=rectificated_register.codigo,
+                    vendedor=rectificated_register.vendedor, fila=rectificated_register.fila, fecha=fecha,
+                    articulo=rectificated_register.articulo, cantidad=float(requirement_diff), neto=float(0), descuento=float(0),
+                    ila=0,
+                    carne=0, iva=float(0), precio=float(product.VentaNeto), numeros="", correlativos="",
+                    pesos="",
+                    esnumerado=input.esnumerado, codigoila="", sobrestock=input.sobrestock, condicionventa=input.condicionventa
+                )
+
 
             rectificated_register.cantidad = min(product.Stock, rectificated_register.cantidad)
             rectificated_register.TotalLinea = float(rectificated_register.precio) * float(rectificated_register.cantidad)

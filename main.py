@@ -90,6 +90,11 @@ def get_dbProcessor():
     return dbProcessor
 
 
+@app.get('/', status_code=200)
+async def init():
+    return {"Empresa": "DIPALZA!!"}
+
+
 @app.post('/login', response_model=User)
 async def login(user: UserLogin):
     """

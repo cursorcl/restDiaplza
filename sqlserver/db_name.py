@@ -725,6 +725,33 @@ t_EOS_REGISTROS = Table(
     Column('condicionventa', String(10, 'Modern_Spanish_CI_AS'), nullable=False)
 )
 
+t_EOS_FALTANTES = Table(
+    'EOS_FALTANTES', metadata,
+    Column('indice', BigInteger, primary_key=True),
+    Column('rut', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('codigo', String(19, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('vendedor', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('fila', Integer, nullable=False),
+    Column('fecha', DateTime, nullable=False),
+    Column('articulo', String(10, 'Modern_Spanish_CI_AS')),
+    Column('cantidad', MONEY),
+    Column('neto', MONEY),
+    Column('descuento', MONEY),
+    Column('codigoila', String(3, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('ila', MONEY),
+    Column('carne', MONEY),
+    Column('iva', MONEY),
+    Column('precio', MONEY),
+    Column('numeros', String(512, 'Modern_Spanish_CI_AS')),
+    Column('correlativos', String(512, 'Modern_Spanish_CI_AS')),
+    Column('pesos', String(1024, 'Modern_Spanish_CI_AS')),
+    Column('esnumerado', BIT),
+    Column('totalila', MONEY),
+    Column('sobrestock', BIT),
+    Column('condicionventa', String(10, 'Modern_Spanish_CI_AS'), nullable=False)
+)
+
+
 
 t_EOS_USUARIOS = Table(
     'EOS_USUARIOS', metadata,
