@@ -22,11 +22,13 @@ from starlette.responses import Response, JSONResponse
 
 from exceptions.dipalza_exception import DipalzaException
 from models.user_model import User, Seller, Route, Client, Product, Pieces, \
-    Encabezado_listado, Detalle_Listado, UserLogin, RegistroOutput, RegistroInput, SellCondition, FProduct, ResumenVenta, PositionRegister, \
+    Encabezado_listado, Detalle_Listado, UserLogin, RegistroOutput, RegistroInput, SellCondition, FProduct, \
+    ResumenVenta, PositionRegister, \
     PositionRegisterOutput, PositionIem, ResumenVentaWeb, SellerCode, LogRegister
 from sqlserver.basedipalza import Base, engine, Session
 from sqlserver.db_name import t_MSOVENDEDOR, t_MSOSTTABLAS, t_MSOCLIENTES, t_ENCABEZADOCUMENTO, \
-    t_DETALLEDOCUMENTO, t_NUMERADOS, t_EOS_USUARIOS, t_ARTICULO, t_EOS_REGISTROS, t_EOS_CONFIGURACION, t_EOS_POSITIONS, t_EOS_LOGVENTAS
+    t_DETALLEDOCUMENTO, t_NUMERADOS, t_EOS_USUARIOS, t_ARTICULO, t_EOS_REGISTROS, t_EOS_CONFIGURACION, t_EOS_POSITIONS, \
+    t_EOS_LOGVENTAS
 from utils.messages import Message, ERROR
 from utils.process_functions import DBProcessor
 from utils.util import to_array_of_json, to_item_json, format_rut_with_points, format_position
@@ -34,9 +36,7 @@ from utils.util import to_array_of_json, to_item_json, format_rut_with_points, f
 import graphene
 from starlette.graphql import GraphQLApp
 
-from queries.ventas import QueryVenta, QueryEncabezado
-
-
+from queries.ventas import QueryVentas, QueryVendedores, QueryRutas
 
 # create logger with log app
 logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
@@ -60,6 +60,17 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Running startup event")
+    get_dbProcessor()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    logger.info("Application shutdown")
 
 
 # Dependency
@@ -113,7 +124,7 @@ async def login(user: UserLogin):
         password = password_bytes.decode('ascii')
         m = hashlib.sha1(password.encode('utf-8'))
         if m.digest() == clave[0].password:
-            upd = t_EOS_USUARIOS.update().where(t_EOS_USUARIOS.c.rut == r).values(lastlogin = datetime.datetime.now())
+            upd = t_EOS_USUARIOS.update().where(t_EOS_USUARIOS.c.rut == r).values(lastlogin=datetime.datetime.now())
             session.execute(upd)
             return User(code=vendedor[0].codigo, name=vendedor[0].nombre, rut=r, token="123")
         else:
@@ -135,7 +146,6 @@ async def read_routes():
     except:
         logger.error("Error al tratar de obtener listado de rutas")
         raise HTTPException(status_code=400, detail="No existen rutas")
-
 
 
 @app.get('/sellers', response_model=List[Seller])
@@ -171,7 +181,7 @@ async def get_sell_conditions():
     """
     session = next(get_db())
     t = t_MSOSTTABLAS
-    condtions = session.query(t).filter(t.c.tabla == "009").values("codigo", "descripcion")
+    condtions = session.query(t).filter(t.c.tabla == "009").values(t.c.codigo, t.c.descripcion)
 
     lst = []
     for r in condtions:
@@ -182,6 +192,7 @@ async def get_sell_conditions():
         lst.append(d)
 
     return lst
+
 
 @app.get('/sellcondition/{code}', response_model=SellCondition)
 async def get_sell_condition(code: str):
@@ -198,6 +209,7 @@ async def get_sell_condition(code: str):
         )
         break
     return condition
+
 
 @app.get('/clients/seller/{seller}/route/{route}', response_model=List[Client])
 async def read_clients_of_seller_and_route(seller: str, route: str):
@@ -266,6 +278,7 @@ async def delete_pieces_by_correlative(correlative: int):
     numbered = session.query(t_NUMERADOS).filter(t_NUMERADOS.correlativo == correlative).delete()
     return Pieces.parse_obj(numbered)
 
+
 @app.get('/products', response_model=List[FProduct])
 async def read_products():
     """
@@ -275,6 +288,7 @@ async def read_products():
     session = next(get_db())
     products = session.query(t_ARTICULO).all()
     return to_array_of_json(products, t_ARTICULO)
+
 
 @app.get('/fproducts', response_model=List[FProduct])
 async def read_fast_products():
@@ -298,6 +312,7 @@ async def read_product_by_code(code: str):
     session = next(get_db())
     p = get_dbProcessor().get_product_by_code(code, session)
     return p
+
 
 @app.get('/fproduct/code/{code}', response_model=Product)
 async def read_fast_product_by_code(code: str):
@@ -431,10 +446,12 @@ async def list_sales():
     t = t_EOS_REGISTROS
     stmt = session.query(
         t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),
-        t.c.vendedor.label("codigo_vendedor"),t.c.condicionventa.label('condicionventa'), func.sum(t.c.neto).label('neto'),
+        t.c.vendedor.label("codigo_vendedor"), t.c.condicionventa.label('condicionventa'),
+        func.sum(t.c.neto).label('neto'),
         func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
         func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva')) \
-        .group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.vendedor, t.c.condicionventa).order_by(t.c.fecha.cast(Date), t.c.vendedor, t.c.rut)
+        .group_by(t.c.rut, t.c.codigo, t.c.fecha.cast(Date), t.c.vendedor, t.c.condicionventa).order_by(
+        t.c.fecha.cast(Date), t.c.vendedor, t.c.rut)
 
     result = session.execute(stmt)
 
@@ -450,7 +467,6 @@ async def list_sales():
             nombre_vendedor = vendedores[r.codigo_vendedor]
             rut = r.rut
             nombre_cliente = clientes[rut]
-
 
             d = ResumenVentaWeb(
                 rut=r.rut,
@@ -468,7 +484,8 @@ async def list_sales():
             )
             lst.append(d)
         except:
-            get_dbProcessor().grabar_log(Message(ERROR, codigo_vendedor, "El rut {rut} no existe en el sistema.", f"Error en el proceso: {sys.exc_info()[0]}"), session)
+            get_dbProcessor().grabar_log(Message(ERROR, codigo_vendedor, "El rut {rut} no existe en el sistema.",
+                                                 f"Error en el proceso: {sys.exc_info()[0]}"), session)
 
     return lst
 
@@ -490,7 +507,8 @@ async def list_sales_by_sale(sale: str):
 
     t = t_EOS_REGISTROS
     stmt = session.query(
-        t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),t.c.condicionventa.label('condicionventacode'),
+        t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),
+        t.c.condicionventa.label('condicionventacode'),
         func.sum(t.c.neto).label('neto'),
         func.sum(t.c.descuento).label('descuento'), func.sum(t.c.totalila).label('totalila'),
         func.sum(t.c.carne).label('carne'), func.sum(t.c.iva).label('iva')) \
@@ -508,7 +526,7 @@ async def list_sales_by_sale(sale: str):
             codigo=r.codigo,
             nombre=nombre_cliente,
             fecha=r.fecha,
-            condicionventacode = r.condicionventacode,
+            condicionventacode=r.condicionventacode,
             neto=r.neto,
             descuento=r.descuento,
             totalila=r.totalila,
@@ -615,6 +633,7 @@ async def register_position(pos: PositionRegister):
     stmt = t.insert().values(vendedor=pos.vendedor, fecha=pos.fecha, latitude=pos.latitude, longitude=pos.longitude,
                              velocidad=pos.velocidad)
     r = session.execute(stmt)
+    session.commit()
     indice = r.inserted_primary_key[0]
     return PositionRegisterOutput(
         indice=indice,
@@ -713,7 +732,8 @@ async def registers_log():
     logs = session.query(t).all()
     if logs:
         for log in logs:
-            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo = log.tipo, titulo = log.titulo, json_parameters=log.json_parameters)
+            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo=log.tipo,
+                            titulo=log.titulo, json_parameters=log.json_parameters)
             result.append(l)
 
     return result
@@ -730,7 +750,8 @@ async def registers_log_vendedor(code: str):
     logs = session.query(t).filter(t.c.vendedor == code).all()
     if logs:
         for log in logs:
-            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo = log.tipo, titulo = log.titulo, json_parameters=log.json_parameters)
+            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo=log.tipo,
+                            titulo=log.titulo, json_parameters=log.json_parameters)
             result.append(l)
 
     return result
@@ -747,7 +768,8 @@ async def registers_log_fecha(date: datetime.datetime):
     logs = session.query(t).filter(t.c.fecha.cast(Date) == date.date()).all()
     if logs:
         for log in logs:
-            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo = log.tipo, titulo = log.titulo, json_parameters=log.json_parameters)
+            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo=log.tipo,
+                            titulo=log.titulo, json_parameters=log.json_parameters)
 
             result.append(l)
 
@@ -768,22 +790,19 @@ async def registers_log_code_fecha(code: str, date: datetime.datetime):
     logs = session.query(t).filter(t.c.vendedor == code, t.c.fecha.cast(Date) == date.date()).all()
     if logs:
         for log in logs:
-            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo = log.tipo, titulo = log.titulo, json_parameters=log.json_parameters)
+            l = LogRegister(id=log.id, vendedor=log.vendedor, mensaje=log.mensaje, fecha=log.fecha, tipo=log.tipo,
+                            titulo=log.titulo, json_parameters=log.json_parameters)
 
             result.append(l)
 
     return result
 
 
-
-
-
-
-app.add_route("/graphqlventas", GraphQLApp(schema=graphene.Schema(query=QueryVenta)))
-app.add_route("/graphqlencabezado", GraphQLApp(schema=graphene.Schema(query=QueryEncabezado)))
-
-
+app.add_route("/ventas", GraphQLApp(schema=graphene.Schema(query=QueryVentas)))
+app.add_route("/vendedores", GraphQLApp(schema=graphene.Schema(query=QueryVendedores)))
+app.add_route("/rutas", GraphQLApp(schema=graphene.Schema(query=QueryRutas)))
 
 if __name__ == "__main__":
+    print("Running the main method")
     get_dbProcessor()
-    uvicorn.run(app, host="0.0.0.0", port=8888, debug=True)
+    uvicorn.run(app, host="0.0.0.0", port=8099, debug=True)

@@ -10,12 +10,13 @@ database_name = base64.b64decode(configuration.database_name).decode('utf-8')
 db_ip = configuration.database_ip
 db_port = configuration.database_port
 
-engine =create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format(user, password, db_ip, db_port, database_name))
+engine = create_engine('mssql+pymssql://{}:{}@{}:{}/{}'.format(user, password, db_ip, db_port, database_name),
+                       echo=False,
+                       implicit_returning=False)
 
 # create a configured 'Session' class
-Session = sessionmaker(autocommit=True, autoflush=True, bind=engine)
-
-
+# Session = sessionmaker(autocommit=True, autoflush=True, bind=engine)
+Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # create a Session
 session = Session()
@@ -36,6 +37,3 @@ if not engine.has_table('EOS_USUARIOS'):
 
 
 Base = declarative_base()
-
-
-

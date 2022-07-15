@@ -8,7 +8,8 @@ import re
 
 # Clase de poyo al proceso de rectificación de unidades en la venta
 class Registro_Rectificado:
-   def __init__(self, dict: dict):
+   def __init__(self, registro):
+       dict = registro._asdict()
        self.codigo = dict['codigo']
        self.vendedor = dict['vendedor']
        self.fila = dict['fila']
@@ -31,6 +32,20 @@ class Registro_Rectificado:
        self.Costo = dict['Costo']
        self.Descripcion = dict['Descripcion']
 
+# Clase de poyo al proceso de registrar lo que falta
+class Registro_Faltante:
+   def __init__(self, register):
+       dict = register._asdict()
+       self.codigo = dict['codigo']
+       self.vendedor = dict['vendedor']
+       self.fecha = dict['fecha']
+       self.articulo = dict['articulo']
+       self.cantidad = 0
+       self.neto = dict['neto']
+       self.descuento = dict['descuento']
+       self.rut = dict['rut']
+       self.precio = dict['precio']
+       self.esnumerado = dict['esnumerado']
 
 pwd_context = CryptContext(
         schemes=["pbkdf2_sha256"],

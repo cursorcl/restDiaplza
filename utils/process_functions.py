@@ -1,15 +1,23 @@
-import datetime, decimal, json, logging, os, sys, base64
-
+import datetime
+import decimal
+import json
+import logging
+import sys
 from queue import Queue
-from sqlalchemy import func, Integer, cast, Date
+from time import time
+
+from sqlalchemy import func, Integer, cast, Date, insert
+
 from models.user_model import RegistroInput, RegistroOutput, SaleConfirmByClient, Product
 from sqlserver.basedipalza import Session
 from sqlserver.db_name import t_NUMERADOS, t_EOS_REGISTROS, t_MSOGENERAL, t_ENCABEZADOCUMENTO, \
     t_MSOSTTABLAS, t_PARAMETROS, t_FOLIOS, t_TOTALDOCUMENTO, t_MSOSTVENTASILA, t_DETALLEDOCUMENTO, t_ARTICULO, \
-    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES, t_INVDETALLEPARTES, t_ARTICULOSNUMERADOS, t_EOS_LOGVENTAS, t_EOS_FALTANTES
-from utils.messages import Message, PROGRESS, BILL, ERROR, FINISH, INIT, MISSING
-from utils.util import format_rut_with_points, Registro_Rectificado
+    t_MSOVENDEDOR, t_CTADOCTO, t_MSOCLIENTES, t_EOS_LOGVENTAS, \
+    t_EOS_FALTANTES, \
+    t_EOS_STOCK
 from utils import configuration
+from utils.messages import Message, PROGRESS, BILL, ERROR, FINISH, INIT, MISSING
+from utils.util import format_rut_with_points, Registro_Rectificado, Registro_Faltante
 
 logger = logging.getLogger(__name__)
 
@@ -33,34 +41,16 @@ class DBProcessor:
 
     def get_product_by_code(self, code, session):
         t = t_ARTICULO
-        products = session.query(t).filter(t.c.Articulo == code).all()
-        pr = products[0]
+        s = t_EOS_STOCK
+
+        products = session.query(t).join(s, t.c.Articulo == s.c.articulo).filter(t.c.Articulo == code). \
+            values(t.c.Articulo, t.c.Descripcion, t.c.VentaNeto, t.c.PorcIla, t.c.PorcCarne, t.c.Unidad, t.c.CodigoIla,
+                   s.c.stock, s.c.piezas, s.c.numerado)
+        pr = next(products);
 
         p = Product(Articulo=pr.Articulo, Descripcion=pr.Descripcion, VentaNeto=pr.VentaNeto, PorcIla=pr.PorcIla,
-                    PorcCarne=pr.PorcCarne, Unidad=pr.Unidad, Stock=0, Pieces=0, Numbered=False, CodigoIla=pr.CodigoIla)
-
-        t = t_ARTICULOSNUMERADOS
-        exists = session.query(t).filter(t.c.articulo == code).scalar() is not None
-        if exists:
-            # es numerado
-            p.Numbered = True
-            result = session.execute(f"EXEC dbo.calcularStockNumerado @id={code}")
-            try:
-                v = result.first()
-                p.Stock = v[1]
-                p.Pieces = v[2]
-            except:
-                p.Stock = 0
-                p.Pieces = 0
-        else:
-
-            result = session.execute(f"EXEC dbo.calcularStock @id={code}")
-            try:
-                v = result.first()
-                p.Stock = v[0]
-            except:
-                p.Stock = 0
-
+                    PorcCarne=pr.PorcCarne, Unidad=pr.Unidad, CodigoIla=pr.CodigoIla, Stock=pr.stock, Pieces=pr.piezas,
+                    Numbered=pr.numerado)
         return p
 
     def agregar_registro_numerado(self, input: RegistroInput, session: Session):
@@ -127,18 +117,23 @@ class DBProcessor:
         code = code.rjust(3, ' ')
 
         fecha = input.fecha
-
-        ins = t_EOS_REGISTROS.insert().values(rut=input.rut, codigo=code,
-                                              vendedor=input.vendedor, fila=input.fila, fecha=fecha,
-                                              articulo=input.articulo, cantidad=peso, neto=vneto, descuento=dscto,
-                                              ila=ila,
-                                              carne=carne, iva=iva, precio=precio, numeros=numeros,
-                                              correlativos=correlativos, pesos=pesos,
-                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock, condicionventa = input.condicionventa)
+        indice = int(time() * 1000)
+        ins = t_EOS_REGISTROS.insert().values(
+            indice=indice,
+            rut=input.rut, codigo=code,
+            vendedor=input.vendedor, fila=input.fila, fecha=fecha,
+            articulo=input.articulo, cantidad=peso, neto=vneto, descuento=dscto,
+            ila=ila,
+            carne=carne, iva=iva, precio=precio, numeros=numeros,
+            correlativos=correlativos, pesos=pesos,
+            esnumerado=input.esnumerado, codigoila=codigo_ila,
+            sobrestock=input.sobrestock,
+            condicionventa=input.condicionventa)
         r = session.execute(ins)
-
+        session.commit()
         return RegistroOutput(
-            indice=r.inserted_primary_key[0],
+            indice=indice,
+
             rut=input.rut,
             codigo=code,
             vendedor=input.vendedor,
@@ -185,17 +180,24 @@ class DBProcessor:
         code = input.codigo.strip().replace(".", "").replace("-", "")
         code = code.rjust(3, ' ')
         fecha = input.fecha.strftime('%Y-%m-%d %H:%M:%S')
-        ins = t_EOS_REGISTROS.insert().values(rut=input.rut, codigo=code,
+
+        indice = int(time() * 1000)
+        ins = t_EOS_REGISTROS.insert().values(indice = indice, rut=input.rut, codigo=code,
                                               vendedor=input.vendedor, fila=input.fila, fecha=fecha,
-                                              articulo=input.articulo, cantidad=cantidad, neto=float(vneto), descuento=float(dscto),
+                                              articulo=input.articulo, cantidad=cantidad, neto=float(vneto),
+                                              descuento=float(dscto),
                                               ila=ila,
-                                              carne=carne, iva=float(iva), precio=float(precio), numeros="", correlativos="",
+                                              carne=carne, iva=float(iva), precio=float(precio), numeros="",
+                                              correlativos="",
                                               pesos="",
-                                              esnumerado=input.esnumerado, codigoila=codigo_ila, sobrestock=input.sobrestock, condicionventa=input.condicionventa)
+                                              esnumerado=input.esnumerado, codigoila=codigo_ila,
+                                              sobrestock=input.sobrestock,
+                                              condicionventa=input.condicionventa)
 
         r = session.execute(ins)
+        session.commit()
         return RegistroOutput(
-            indice=r.inserted_primary_key[0],
+            indice=indice,
             rut=input.rut,
             codigo=code,
             vendedor=input.vendedor,
@@ -266,7 +268,9 @@ class DBProcessor:
             codigo = "9998"
 
         t = t_MSOSTTABLAS
-        generator = session.query(t).filter(t.c.tabla == "015", t.c.codigo == codigo).values(t.c.codigo, t.c.descripcion.label('Descripcion'),
+        generator = session.query(t).filter(t.c.tabla == "015", t.c.codigo == codigo).values(t.c.codigo,
+                                                                                             t.c.descripcion.label(
+                                                                                                 'Descripcion'),
                                                                                              t.c.valor)
         register = next(generator, None)
         if not register:
@@ -305,16 +309,16 @@ class DBProcessor:
                 for n in range(len(numeros)):
                     insert_stmt = t_NUMERADOS.insert().values(
                         articulo=register.articulo,
-                        #correlativo=int(correlativos[n]),
+                        # correlativo=int(correlativos[n]),
                         peso=float(pesos[n]),
                         numero=numeros[n],
                         narticulo=int(register.articulo))
                     session.execute(insert_stmt)
                     stmt = t_EOS_REGISTROS.delete().where(t_EOS_REGISTROS.c.indice == indice)
                     session.execute(stmt)
-            #session.commit()
+            session.commit()
         except:
-            print( sys.exc_info()[0])
+            print(sys.exc_info()[0])
             session.rollback()
 
         return register
@@ -333,40 +337,42 @@ class DBProcessor:
         Procesa todas las ventas que se encunentran en los registros para un vendedor.
         """
         try:
+            self.grabar_log(Message(INIT, sale, "Ventas", f"Iniciando procesamiento de ventas para el vendedor {sale}"),
+                            session)
 
-            self.grabar_log(Message(INIT, sale, "Ventas", f"Iniciando procesamiento de ventas para el vendedor {sale}"), session)
             t = t_EOS_REGISTROS
-            stmt = session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"), t.c.condicionventa.label('condicionventa')).filter(
-                t.c.vendedor == sale).distinct()
-
+            stmt = session.query(t.c.rut.label('rut'), t.c.codigo.label('codigo'), t.c.fecha.cast(Date).label("fecha"),
+                                 t.c.condicionventa.label('condicionventa')).filter(t.c.vendedor == sale).distinct()
             result = session.execute(stmt)
+
             registros = list(result)
             nro_total_registros = len(registros)
 
             nro_registro = 1
             for registro in registros:
                 self.grabar_log(Message(PROGRESS, sale, "Procesando Ventas",
-                                       f"Procesando venta de cliente {format_rut_with_points(registro.rut)}",
-                                       nro_registro=nro_registro, nro_total_registros=nro_total_registros), session)
-
+                                        f"Procesando venta de cliente {format_rut_with_points(registro.rut)}",
+                                        nro_registro=nro_registro, nro_total_registros=nro_total_registros), session)
 
                 args = registro.fecha.timetuple()[:6]
                 fecha = datetime.datetime(*args)
                 item = SaleConfirmByClient(rut=registro.rut, codigo=registro.codigo, vendedor=sale,
-                                           condicion_venta=registro.condicionventa, fecha=fecha)
+                                           condicion_venta=registro.condicionventa,
+                                           fecha=fecha)
                 self.process_venta(item, session)
                 # Notificando
                 nro_registro = nro_registro + 1
-            session.query(t).filter(t.c.vendedor == sale).delete(synchronize_session=False)
-            self.grabar_log(Message(FINISH, sale, "Ventas",
-                              f"Finalizado el proceso de registro de ventas para el vendedor {sale}"), session)
-            #session.commit()
 
+            session.query(t).filter(t.c.vendedor == sale).delete(synchronize_session=False)
+            self.grabar_log(
+                Message(FINISH, sale, "Ventas", f"Finalizado el proceso de registro de ventas para el vendedor {sale}"),
+                session)
+            session.commit()
         except Exception as ex:
-            self.grabar_log(Message(ERROR, sale, "Error en Procesamiento de Ventas",
-                                   f"Error en el proceso: {sys.exc_info()[0]}"), session)
+            self.grabar_log(
+                Message(ERROR, sale, "Error en Procesamiento de Ventas", f"Error en el proceso: {sys.exc_info()[0]}"),
+                session)
             session.rollback()
-            raise
             return False
 
         return True
@@ -389,20 +395,34 @@ class DBProcessor:
         registros = session.query(r, p). \
             filter(p.c.Articulo == r.c.articulo). \
             filter(r.c.rut == confirmation.rut, r.c.codigo == confirmation.codigo,
-                   r.c.vendedor == confirmation.vendedor).values(
-            r.c.rut, r.c.codigo, r.c.vendedor, r.c.fila, r.c.fecha, r.c.articulo, r.c.cantidad, r.c.neto, r.c.descuento,
-            r.c.codigoila, r.c.ila, r.c.carne, r.c.iva, r.c.precio, r.c.numeros, r.c.correlativos, r.c.pesos,
-            r.c.esnumerado, r.c.totalila, p.c.Costo, p.c.Descripcion)
+                   r.c.vendedor == confirmation.vendedor). \
+            values(r.c.rut, r.c.codigo, r.c.vendedor, r.c.fila, r.c.fecha, r.c.articulo, r.c.cantidad, r.c.neto,
+                   r.c.descuento,
+                   r.c.codigoila, r.c.ila, r.c.carne, r.c.iva, r.c.precio, r.c.numeros, r.c.correlativos, r.c.pesos,
+                   r.c.esnumerado, r.c.totalila, p.c.Costo, p.c.Descripcion)
 
         facturas = dict()
         correlativo = 0
         # obtengo los registros de cada venta y aprovecho de realizar cálculos
         nro_lineas = 0
         for registro in registros:
-
             # Se reevalua la cantidad de productos
-            register_rectified = self.get_register_rectified_with_real_stock(registro, session)
-            if register_rectified is None:
+            result = self.obtener_registro_y_faltante(registro, session)
+
+            registro_rectificado = result["rectificado"]
+            registro_faltante = result["faltante"]
+
+            if registro_faltante is not None:
+                statement_insert = t_EOS_FALTANTES.insert().values(
+                    rut=registro_faltante.rut, codigo=registro_faltante.codigo,
+                    vendedor=registro_faltante.vendedor, fecha=registro_faltante.fecha,
+                    articulo=registro_faltante.articulo, cantidad=registro_faltante.cantidad,
+                    neto=registro_faltante.neto,
+                    descuento=registro_faltante.descuento, precio=registro_faltante.precio,
+                    esnumerado=registro_faltante.esnumerado)
+                session.execute(statement_insert)
+
+            if registro_rectificado is None:
                 # quiere decir que el producto no tiene el stock, por tanto pasamos al siguiente.
                 continue
 
@@ -415,19 +435,20 @@ class DBProcessor:
                 carne_venta = 0
                 descuento_venta = 0
                 facturas[correlativo] = {"id": "", "factura": "", "condicion_venta": condicion_venta,
-                                         "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
+                                         "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento,
+                                         "afecto": "A",
                                          "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
                                          "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
                                          "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
-                                         "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": []}
-
+                                         "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor,
+                                         "registros": []}
 
             neto_venta = neto_venta + (0 if registro.neto is None else registro.neto)
             iva_venta = iva_venta + (0 if registro.iva is None else registro.iva)
             carne_venta = carne_venta + (0 if registro.carne is None else registro.carne)
             descuento_venta = descuento_venta + (0 if not registro.descuento else registro.descuento)
 
-            if (not registro.ila is None) and registro.ila > 0:
+            if registro.ila is not None and registro.ila > 0:
                 codigo_ila = registro.codigoila.strip()
                 ilas_venta_dict[codigo_ila]["porcentaje"] = codigo_ila
                 ilas_venta_dict[codigo_ila]["suma"] = ilas_venta_dict[codigo_ila]["suma"] + registro.ila
@@ -450,11 +471,13 @@ class DBProcessor:
                 if nro_lineas >= self.numero_lineas_factura:
                     correlativo = correlativo + 1
                     facturas[correlativo] = {"id": "", "factura": "", "condicion_venta": condicion_venta,
-                                             "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento, "afecto": "A",
+                                             "fecha": fecha_operacion, "fecha_vencimiento": fecha_vencimiento,
+                                             "afecto": "A",
                                              "rut": confirmation.rut, "codigo": confirmation.codigo, "local": "000",
                                              "tipo": "06", "tipo1": factura_electronica, "ilas": ilas_venta_dict,
                                              "total_neto": 0, "total_iva": 0, "total_carne": 0, "total_descuento": 0,
-                                             "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor, "registros": []}
+                                             "comision_vendedor": comision_vendedor, "vendedor": confirmation.vendedor,
+                                             "registros": []}
 
                 neto_venta = neto_venta + conduccion[2]
                 facturas[correlativo]["registros"].append(conduccion)
@@ -476,136 +499,181 @@ class DBProcessor:
             self.grabar_cuenta_documento(factura, session)
             self.grabar_ila(factura, session)
 
-            self.grabar_log(Message(BILL, confirmation.vendedor, "Facturas", f"Factura Nro: {factura['factura']}", nro_factura=factura['factura'], nro_id=factura['id']), session)
+            self.grabar_log(Message(BILL, confirmation.vendedor, "Facturas", f"Factura Nro: {factura['factura']}",
+                                    nro_factura=factura['factura'],
+                                    nro_id=factura['id']), session)
 
         return True
 
-    def get_register_rectified_with_real_stock(self, registro_original, session):
+    def ajusta_stock_producto_si_numerado(self, session, registro_original):
+        """
+        Corrige el registro que viene de la Base de Datos
+        Se asume que en el registro existen 3 campos (numeros, correlativos y pesos) que contienen los elementos numerados solicitados por el cliente,
+        todos separados por punto y coma (;). Cuando el el celular se ha solicitado un producto numerado, del cual no hay stock, se coloca un valor 0
+        en cada una de estas variables.
+        En este método, se buscan los 0 y se tratan de completar verificando si es que hay stock. En el caso que no haya stock, se graba el registro
+        que indica que no se vendió.
+        @param session: La sesión con la que se está trabajando en el momento.
+        @param registro_original: El registro obtenido desde la BD
+        @return:
+        """
+        producto = self.get_product_by_code(registro_original.articulo, session)
+        registro_rectificado = None
+        registro_faltante = None
 
-        rectificated_register = Registro_Rectificado(registro_original._asdict())
+        # Obtengo todos los elementos que tienen un 0, ya que fue pedido pero no había stockc on el fin de volver a revisar si ahora hay stock
+        numeros_que_son_cero = list(filter(lambda x: x.strip() == "0", registro_rectificado.numeros.split(";")))
+        numeros_que_no_cero = list(filter(lambda x: x.strip() != "0", registro_rectificado.numeros.split(";")))
 
-        product = self.get_product_by_code(rectificated_register.articulo, session)
-        if product.Numbered:
-            # Obtengo todos los elementos que tienen un 0, ya que fue pedido pero no había stock
-            # Con el fin de volver a revisar si ahora hay stock
-            zero_numbers = list(filter(lambda x: x.strip() == "0", rectificated_register.numeros.split(";")))
-            len_zero_numbers = len(zero_numbers)
+        if len(numeros_que_son_cero) == 0:
+            # Tiene el total de su pedido completo, por lo tanto, se puede considerar listo y se retorna tal cual.
+            registro_rectificado = Registro_Rectificado(registro_original)
+            return {"rectificado": registro_rectificado, "faltante": registro_faltante}
 
-            # Tiene el total de su pedido completo
-            if len_zero_numbers == 0:
-                return rectificated_register
+        # Busco todos los numerados que hay disponibles en la BD en el momento del procesamiento.
+        numerados_existentes_en_bd = session.query(t_NUMERADOS).filter(
+            t_NUMERADOS.c.articulo == registro_original.articulo).all()
 
+        stock_cantidad = len(numerados_existentes_en_bd)
+        diferencia_entre_solicitados_y_existentes = len(numeros_que_son_cero) - stock_cantidad
+
+        if diferencia_entre_solicitados_y_existentes > 0:
+            # Significa que hay unidades que no podrán ser entregadas.
+            self.grabar_log(Message(MISSING, registro_original.vendedor, "Faltan unidades ",
+                                    f"Faltan {diferencia_entre_solicitados_y_existentes:.2f} del producto {registro_original.articulo} {registro_original.Descripcion}",
+                                    requirement_diff=float(diferencia_entre_solicitados_y_existentes),
+                                    product_code=registro_original.articulo),
+                            session)
+
+            # Se agrega registro con la informción que indica que no se ha podido vender el producto.
+            registro_faltante = Registro_Faltante(registro_original)
+            registro_faltante.cantidad = float(diferencia_entre_solicitados_y_existentes)
+            registro_faltante.neto = float(0)
+
+        if numeros_que_no_cero > 0:
+            registro_rectificado = Registro_Rectificado(registro_original)
             # Se filtran los números, correlativos y pesos que son mayores que 0 y se vuelven a convertir en string separado por ';'
-            rectificated_register.numeros = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.numeros.split(";"))))
-            rectificated_register.correlativos = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.correlativos.split(";"))))
-            rectificated_register.pesos = ";".join(list(filter(lambda x: x.strip() != "0", rectificated_register.pesos.split(";"))))
+            registro_rectificado.numeros = ";".join(
+                list(filter(lambda x: x.strip() != "0", registro_rectificado.numeros.split(";"))))
+            registro_rectificado.correlativos = ";".join(
+                list(filter(lambda x: x.strip() != "0", registro_rectificado.correlativos.split(";"))))
+            registro_rectificado.pesos = ";".join(
+                list(filter(lambda x: x.strip() != "0", registro_rectificado.pesos.split(";"))))
 
-            # Se ha pedido más productos de los que habían
-            database_numbered = session.query(t_NUMERADOS).filter(t_NUMERADOS.c.articulo == rectificated_register.articulo).all()
-            len_database_numbered = len(database_numbered)
+        if stock_cantidad > 0:
+            # Se busca en la BD por si hay algún registro numerado y así sumarlo a la venta.
+            numeros_generados = ""
+            correlativos_generados = ""
+            pesos_generados = ""
+            peso_total = 0
 
-            requirement_diff = len_zero_numbers - len_database_numbered;
+            for n in range(len(numeros_que_son_cero)):
+                if n < len(numerados_existentes_en_bd):
+                    registro_numerado = numerados_existentes_en_bd[n]
+                    rpeso = registro_numerado.peso
+                    rnumero = registro_numerado.numero
+                    rcorrelativo = registro_numerado.correlativo
 
-            if (requirement_diff > 0):
-                # Significa que hay unidades que no podrán ser entregadas.
-                self.grabar_log(Message(MISSING, rectificated_register.vendedor, "Faltan unidades ",
-                                       f"Faltan {requirement_diff:.2f} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
-                                       requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
-
-                # Aquí debo agregar registro de faltante de stock
-                t_EOS_FALTANTES.insert().values(
-                    rut=rectificated_register.rut, codigo=rectificated_register.codigo,
-                    vendedor=rectificated_register.vendedor, fila=rectificated_register.fila, fecha=fecha,
-                    articulo=rectificated_register.articulo, cantidad=float(requirement_diff), neto=float(0), descuento=float(0),
-                    ila=0,
-                    carne=0, iva=float(0), precio=float(product.VentaNeto), numeros="", correlativos="",
-                    pesos="",
-                    esnumerado=input.esnumerado, codigoila="", sobrestock=input.sobrestock, condicionventa=input.condicionventa
-                )
-
-            generated_numbers = ""
-            generated_correlatives = ""
-            generated_weights = ""
-            weight = 0
-
-            for n in range(len(zero_numbers)):
-                if n < len(database_numbered):
-                    reg = database_numbered[n]
-                    rpeso = reg.peso
-                    rnumero = reg.numero
-                    rcorrelativo = reg.correlativo
-                    stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.articulo == database_numbered[n].articulo)
+                    # Se quita registro de la BD para que nadie más lo use. (Tengo mis dudas si es conveniente que sea aquí)
+                    stmt = t_NUMERADOS.delete().where(t_NUMERADOS.c.articulo == numerados_existentes_en_bd[n].articulo)
                     session.execute(stmt)
-                    weight = weight + rpeso
-                    generated_numbers = f"{generated_numbers};{rnumero}"
-                    generated_correlatives = f"{generated_correlatives};{rcorrelativo}"
-                    generated_weights = f"{generated_weights};{rpeso}"
+
+                    peso_total = peso_total + rpeso
+                    numeros_generados = f"{numeros_generados};{rnumero}"
+                    correlativos_generados = f"{correlativos_generados};{rcorrelativo}"
+                    pesos_generados = f"{pesos_generados};{rpeso}"
 
             # se saca el primer ";"
-            generated_numbers = generated_numbers[1:]
-            generated_correlatives = generated_correlatives[1:]
-            generated_weights = generated_weights[1:]
+            numeros_generados = numeros_generados[1:]
+            correlativos_generados = correlativos_generados[1:]
+            pesos_generados = pesos_generados[1:]
 
-            precio = float(product.VentaNeto)
-            neto = float(weight) * float(precio)
-            dscto = neto * float(rectificated_register.descuento) / 100.0;
-            neto = neto - dscto
+            precio = float(producto.VentaNeto)
+            neto = float(peso_total) * float(precio)
+            descuento = neto * float(registro_rectificado.descuento) / 100.0;
+            neto = neto - descuento
 
-            vneto = neto if neto > 0 else 0
-            iva = vneto * float(self.iva) / 100.0
-            carne = vneto * float(product.PorcCarne) / 100.0
-            ila = vneto * float(product.PorcIla) / 100.0
-            codigo_ila = product.CodigoIla
+            venta_neta = neto if neto > 0 else 0
+            iva = venta_neta * float(self.iva) / 100.0
+            carne = venta_neta * float(producto.PorcCarne) / 100.0
+            ila = venta_neta * float(producto.PorcIla) / 100.0
+            codigo_ila = producto.CodigoIla
 
-            rectificated_register.cantidad = float(rectificated_register.cantidad) + float(weight)
-            rectificated_register.neto = float(rectificated_register.neto) + vneto
-            rectificated_register.descuento = float(rectificated_register.descuento) + dscto
-            rectificated_register.ila = float(rectificated_register.ila) + ila
-            rectificated_register.carne = float(rectificated_register.carne) + carne
-            rectificated_register.iva = float(rectificated_register.iva) + iva
-            rectificated_register.inumeros = f"{rectificated_register.numeros};{generated_numbers}"
-            rectificated_register.correlativos = f"{rectificated_register.correlativos};{generated_correlatives}"
-            rectificated_register.pesos = f"{rectificated_register.pesos};{generated_weights}"
+            registro_rectificado.cantidad = float(registro_rectificado.cantidad) + float(peso_total)
+            registro_rectificado.neto = float(registro_rectificado.neto) + venta_neta
+            registro_rectificado.descuento = float(registro_rectificado.descuento) + descuento
+            registro_rectificado.ila = float(registro_rectificado.ila) + ila
+            registro_rectificado.carne = float(registro_rectificado.carne) + carne
+            registro_rectificado.iva = float(registro_rectificado.iva) + iva
+            registro_rectificado.inumeros = f"{registro_rectificado.numeros};{numeros_generados}"
+            registro_rectificado.correlativos = f"{registro_rectificado.correlativos};{correlativos_generados}"
+            registro_rectificado.pesos = f"{registro_rectificado.pesos};{pesos_generados}"
+            registro_rectificado.codigoila = codigo_ila
 
+            texto_descripcion = registro_rectificado.Descripcion
+            if registro_rectificado.numeros is not None and registro_rectificado.numeros.strip() != ";":
+                texto_descripcion = f"{producto.Descripcion} [{registro_rectificado.numeros}]"
+
+        return {"rectificado": registro_rectificado, "faltante": registro_faltante}
+
+    def ajusta_stock_producto_no_numerado(self, session, registro_original):
+        ''' 
+        Construye el registro rectificado, en base al stock existente.
+
+        Para corregir, busca el stock existente del producto, con eso calcula la diferencia entre lo solicitado y lo existente.
+        Si la diferencia  es mayor que cero (0) signifiva que no hay el suficiente stock para la venta y se genera un Registro_Faltante.
+        En el caso que la cantidad vendida sea cero (0)  no se generará el Registro Rectificado.
+        '''
+        producto = self.get_product_by_code(registro_original.articulo, session)
+        registro_rectificado = None
+        registro_faltante = None
+
+        # recordar que en descuento viene un valor calculado, y que TotalLinea viene el valor Neto menos el valor del descuento
+        porcentaje_descuento = registro_original.descuento / (registro_original.neto + registro_original.descuento)
+
+        stock = producto.Stock if producto.Stock >= 0 else 0
+
+        diferencia_cantidad_pedida_vs_existencia = float(registro_original.cantidad) - stock
+        if diferencia_cantidad_pedida_vs_existencia > 0:
+            # Significa que hay unidades que no podrán ser entregadas.
+            self.grabar_log(Message(MISSING, registro_original.vendedor, "Faltan unidades ",
+                                    f"Fatan {diferencia_cantidad_pedida_vs_existencia} del producto {registro_original.articulo} {registro_original.Descripcion}",
+                                    requirement_diff=float(diferencia_cantidad_pedida_vs_existencia),
+                                    product_code=registro_original.articulo),
+                            session)
+
+            # Aquí debo agregar registro de faltante de stock
+            # Se agrega registro con la informción que indica que no se ha podido vender el producto.
+            registro_faltante = Registro_Faltante(registro_original)
+            registro_faltante.cantidad = float(diferencia_cantidad_pedida_vs_existencia)
+            registro_faltante.neto = float(producto.VentaNeto) * float(registro_faltante.cantidad) * (
+                    1 - float(porcentaje_descuento))
+            registro_faltante.descuento = float(producto.VentaNeto) * float(registro_faltante.cantidad) * float(
+                porcentaje_descuento)
+
+        cantidad_vendida = min(stock, float(registro_original.cantidad))
+        if cantidad_vendida > 0:
+            # Solamente si tengo ventas genero el registro rectificado. La diferencia debe ser menor o igual a 0 para que haya venta.
+            registro_rectificado = Registro_Rectificado(registro_original)
+            registro_rectificado.cantidad = min(stock, registro_rectificado.cantidad)
+            registro_rectificado.neto = float(registro_rectificado.precio) * float(registro_rectificado.cantidad) * (
+                    1 - float(porcentaje_descuento))
+            registro_rectificado.iva = float(registro_rectificado.neto) * float(self.iva) / 100
+            registro_rectificado.ila = float(registro_rectificado.neto) * float(producto.PorcIla) / 100.0
+            registro_rectificado.descuento = float(registro_rectificado.precio) * float(
+                registro_rectificado.cantidad) * float(porcentaje_descuento)
+
+        return {"rectificado": registro_rectificado, "faltante": registro_faltante}
+
+    def obtener_registro_y_faltante(self, registro_original, session):
+
+        product = self.get_product_by_code(registro_original.articulo, session)
+        if product.Numbered:
+            result = self.ajusta_stock_producto_si_numerado(session, registro_original);
         else:
+            result = self.ajusta_stock_producto_no_numerado(session, registro_original)
 
-            requirement_diff = float(rectificated_register.cantidad) - product.Stock
-            if requirement_diff > 0:
-                # Significa que hay unidades que no podrán ser entregadas.
-                self.grabar_log(Message(MISSING, rectificated_register.vendedor,  "Faltan unidades ",
-                                       f"Fatan {requirement_diff} del producto {rectificated_register.articulo} {rectificated_register.Descripcion}",
-                                       requirement_diff=float(requirement_diff), product_code=rectificated_register.articulo), session)
-
-                # Aquí debo agregar registro de faltante de stock
-                t_EOS_FALTANTES.insert().values(
-                    rut=rectificated_register.rut, codigo=rectificated_register.codigo,
-                    vendedor=rectificated_register.vendedor, fila=rectificated_register.fila, fecha=fecha,
-                    articulo=rectificated_register.articulo, cantidad=float(requirement_diff), neto=float(0), descuento=float(0),
-                    ila=0,
-                    carne=0, iva=float(0), precio=float(product.VentaNeto), numeros="", correlativos="",
-                    pesos="",
-                    esnumerado=input.esnumerado, codigoila="", sobrestock=input.sobrestock, condicionventa=input.condicionventa
-                )
-
-
-            rectificated_register.cantidad = min(product.Stock, rectificated_register.cantidad)
-            rectificated_register.TotalLinea = float(rectificated_register.precio) * float(rectificated_register.cantidad)
-            rectificated_register.iva = float(rectificated_register.TotalLinea) * float(self.iva) / 100
-            rectificated_register.ila = float(rectificated_register.TotalLinea) * float(product.PorcIla) / 100.0
-            rectificated_register.descuento = float(rectificated_register.TotalLinea) * float(rectificated_register.descuento) / 100.0
-
-        texto_descripcion = rectificated_register.Descripcion
-
-        if rectificated_register.numeros is not None and rectificated_register.numeros.strip() != ";":
-
-            texto_descripcion = f"{product.Descripcion} [{rectificated_register.numeros}]"
-
-            """
-            Cantidad=rectificated_register.cantidad if "cantidad" in rectificated_register.keys() else 0,
-            Variacion=-rectificated_register.descuento if "descuento" in rectificated_register.keys() else 0,
-            Descripcion=texto_descripcion
-            """
-        return rectificated_register if rectificated_register.cantidad != 0 else None
+        return result
 
     def grabar_encabezado(self, factura, session: Session):
         """
@@ -766,5 +834,7 @@ class DBProcessor:
         self.queue.put(message)
         params = json.dumps(message.extra_params)
         t = t_EOS_LOGVENTAS
-        ins = t.insert().values(fecha= datetime.date.today(), vendedor = message.code, tipo = message.type, titulo = message.title, mensaje = message.description, json_parameters = params)
+        ins = t.insert().values(fecha=datetime.date.today(), vendedor=message.code, tipo=message.type,
+                                titulo=message.title,
+                                mensaje=message.description, json_parameters=params)
         session.execute(ins)

@@ -1,5 +1,6 @@
 # coding: utf-8
-from sqlalchemy import BigInteger, CHAR, Column, DateTime, Float, Integer, LargeBinary, MetaData, Numeric, SmallInteger, String, TEXT, Table, text
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, Float, Integer, LargeBinary, MetaData, Numeric, SmallInteger, \
+    String, TEXT, Table, text, FetchedValue
 from sqlalchemy.dialects.mssql import BIT, IMAGE, MONEY, SMALLMONEY, TIMESTAMP, TINYINT
 
 metadata = MetaData()
@@ -700,8 +701,9 @@ t_EOS_POSITIONS = Table(
 
 
 t_EOS_REGISTROS = Table(
+
     'EOS_REGISTROS', metadata,
-    Column('indice', BigInteger, primary_key=True),
+    Column('indice', BigInteger, primary_key=True, autoincrement=False),
     Column('rut', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
     Column('codigo', String(19, 'Modern_Spanish_CI_AS'), nullable=False),
     Column('vendedor', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
@@ -722,7 +724,8 @@ t_EOS_REGISTROS = Table(
     Column('esnumerado', BIT),
     Column('totalila', MONEY),
     Column('sobrestock', BIT),
-    Column('condicionventa', String(10, 'Modern_Spanish_CI_AS'), nullable=False)
+    Column('condicionventa', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
+    Column('id_venta', BigInteger, nullable=True)
 )
 
 t_EOS_FALTANTES = Table(
@@ -731,24 +734,13 @@ t_EOS_FALTANTES = Table(
     Column('rut', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
     Column('codigo', String(19, 'Modern_Spanish_CI_AS'), nullable=False),
     Column('vendedor', String(10, 'Modern_Spanish_CI_AS'), nullable=False),
-    Column('fila', Integer, nullable=False),
     Column('fecha', DateTime, nullable=False),
     Column('articulo', String(10, 'Modern_Spanish_CI_AS')),
     Column('cantidad', MONEY),
-    Column('neto', MONEY),
     Column('descuento', MONEY),
-    Column('codigoila', String(3, 'Modern_Spanish_CI_AS'), nullable=False),
-    Column('ila', MONEY),
-    Column('carne', MONEY),
-    Column('iva', MONEY),
+    Column('neto', MONEY),
     Column('precio', MONEY),
-    Column('numeros', String(512, 'Modern_Spanish_CI_AS')),
-    Column('correlativos', String(512, 'Modern_Spanish_CI_AS')),
-    Column('pesos', String(1024, 'Modern_Spanish_CI_AS')),
-    Column('esnumerado', BIT),
-    Column('totalila', MONEY),
-    Column('sobrestock', BIT),
-    Column('condicionventa', String(10, 'Modern_Spanish_CI_AS'), nullable=False)
+    Column('esnumerado', BIT)
 )
 
 
@@ -2102,4 +2094,13 @@ t_VENTAS_METRICS = Table(
     Column('name', String(50, 'SQL_Latin1_General_CP1_CI_AS')),
     Column('ventaneta', Numeric(18, 0)),
     Column('ventabruta', Numeric(18, 0))
+)
+
+t_EOS_STOCK = Table(
+    'EOS_STOCK', metadata,
+    Column('articulo', String(15, 'SQL_Latin1_General_CP1_CI_AS')),
+    Column('stock', MONEY),
+    Column('local', String(3, 'SQL_Latin1_General_CP1_CI_AS')),
+    Column('piezas', MONEY),
+    Column('numerado', TINYINT)
 )
